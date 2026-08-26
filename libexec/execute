@@ -127,45 +127,64 @@ def render_tools_wrapper(tools):
         "#!/bin/sh",
         "set -eu",
         'TOOLS_ROOT="/tmp/kiln-tools"',
-        'mkdir -p "$TOOLS_ROOT/bin" "$TOOLS_ROOT/corepack"',
+        'mkdir -p "$TOOLS_ROOT/corepack"',
         'export COREPACK_HOME="$TOOLS_ROOT/corepack"',
         'export COREPACK_DEFAULT_TO_LATEST=0',
         'export COREPACK_ENABLE_PROJECT_SPEC=0',
-        'export PATH="$TOOLS_ROOT/bin:$PATH"',
+        'export PATH="/run/kiln/tools/bin:$PATH"',
+        'exec "$@"',
+        "",
     ]
 
-    if "pnpm" in tools:
-        version = tools["pnpm"]
-        spec = shlex.quote(f"pnpm@{version}")
-        lines.extend([
-            'if ! command -v corepack >/dev/null 2>&1; then',
-            '  echo "kiln tools: corepack is required to provide pnpm" >&2',
-            '  exit 127',
-            'fi',
-            'cat > "$TOOLS_ROOT/bin/pnpm" <<\'KILN_PNPM\'',
-            '#!/bin/sh',
-            f'exec corepack {spec} "$@"',
-            'KILN_PNPM',
-            'chmod 700 "$TOOLS_ROOT/bin/pnpm"',
-        ])
-
-    lines.append('exec "$@"')
-    lines.append("")
     return "\n".join(lines)
-
 
 def prepare_tools_wrapper(build_dir, job_id, tools, execution_argv):
     if not tools:
-        return None, list(execution_argv)
+        return [], list(execution_argv)
+
     commands_dir = build_dir / "commands"
     commands_dir.mkdir(mode=0o750, parents=True, exist_ok=True)
-    wrapper = commands_dir / f"{job_id}.tools.sh"
-    wrapper.write_text(render_tools_wrapper(tools), encoding="utf-8")
-    wrapper.chmod(0o600)
-    mount = f"type=bind,src={wrapper},dst=/run/kiln/tools-wrapper.sh,readonly"
-    argv = ["/bin/sh", "/run/kiln/tools-wrapper.sh", *execution_argv]
-    return mount, argv
 
+    tools_wrapper = commands_dir / f"{job_id}.tools.sh"
+    tools_wrapper.write_text(
+        render_tools_wrapper(tools),
+        encoding="utf-8",
+    )
+    tools_wrapper.chmod(0o600)
+
+    tools_root = build_dir / "runtime" / job_id / "tools"
+    tools_bin = tools_root / "bin"
+    tools_bin.mkdir(mode=0o750, parents=True, exist_ok=True)
+
+    if "pnpm" in tools:
+        version = tools["pnpm"]
+
+        pnpm_wrapper = tools_bin / "pnpm"
+        pnpm_wrapper.write_text(
+            "#!/bin/sh\n"
+            f"exec corepack {shlex.quote(f'pnpm@{version}')} \"$@\"\n",
+            encoding="utf-8",
+        )
+        pnpm_wrapper.chmod(0o750)
+
+    mounts = [
+        (
+            f"type=bind,src={tools_wrapper},"
+            "dst=/run/kiln/tools-wrapper.sh,readonly"
+        ),
+        (
+            f"type=bind,src={tools_root},"
+            "dst=/run/kiln/tools,readonly"
+        ),
+    ]
+
+    argv = [
+        "/bin/sh",
+        "/run/kiln/tools-wrapper.sh",
+        *execution_argv,
+    ]
+
+    return mounts, argv
 
 def input_env_name(job_id):
     return "KILN_INPUT_" + job_id.upper().replace("-", "_")
@@ -469,11 +488,14 @@ def main():
                 execution_argv = [
                     "/bin/sh", "/run/kiln/secret-wrapper.sh", *execution_argv
                 ]
-            tools_mount, execution_argv = prepare_tools_wrapper(
-                build_dir, job_id, job.get("tools", {}), execution_argv
+            tools_mounts, execution_argv = prepare_tools_wrapper(
+                build_dir,
+                job_id,
+                job.get("tools", {}),
+                execution_argv,
             )
-            if tools_mount is not None:
-                extra_mounts.append(tools_mount)
+
+            extra_mounts.extend(tools_mounts)
             public_env = build_public_env(runtime, job_id, job, input_roots)
             docker_command = [
                 "/usr/bin/docker", "run",
