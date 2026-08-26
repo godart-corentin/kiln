@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PYTHON_FILES = [
     ROOT / "bin" / "kiln",
     ROOT / "libexec" / "controller",
+    ROOT / "libexec" / "pipeline.py",
     ROOT / "libexec" / "enqueue",
     ROOT / "libexec" / "execute",
     ROOT / "libexec" / "notify-discord",
@@ -55,11 +56,18 @@ def main():
     json_files = [ROOT / "config" / "defaults.json"] + sorted((ROOT / "examples").glob("*.json"))
     for path in json_files:
         try:
-            json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
             print(f"OK json:   {path.relative_to(ROOT)}")
+            if path.parent.name == "examples" and isinstance(data, dict) and "steps" in data:
+                failed = True
+                print(f"FAIL schema: legacy top-level steps in {path.relative_to(ROOT)}", file=sys.stderr)
         except Exception as exc:
             failed = True
             print(f"FAIL json: {path.relative_to(ROOT)}: {exc}", file=sys.stderr)
+
+    if (ROOT / "examples" / "pipeline.json").exists():
+        failed = True
+        print("FAIL schema: legacy examples/pipeline.json still exists", file=sys.stderr)
 
     execute_text = (ROOT / "libexec" / "execute").read_text(encoding="utf-8")
     forbidden = [

@@ -6,17 +6,15 @@
       "feature/*"
     ]
   },
-  "max_parallel": 3,
-  "steps": {
-    "quality": {
-      "stage": "tests",
+  "max_parallel": 2,
+  "jobs": {
+    "tests": {
+      "group": "quality",
       "image": "node:22-bookworm",
       "network": "kiln-ci",
-      "needs": [],
-      "command": [
-        "sh",
-        "-lc",
-        "corepack pnpm@11.15.1 install --frozen-lockfile && corepack pnpm@11.15.1 test"
+      "run": [
+        "corepack pnpm@11.15.1 install --frozen-lockfile",
+        "pnpm test"
       ]
     }
   }

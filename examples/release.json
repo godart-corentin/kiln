@@ -1,29 +1,25 @@
 {
   "schema": 1,
   "max_parallel": 2,
-  "steps": {
+  "jobs": {
     "validate": {
-      "stage": "tests",
+      "group": "quality",
       "image": "node:22-bookworm",
       "network": "kiln-ci",
-      "needs": [],
-      "command": [
-        "sh",
-        "-lc",
-        "corepack pnpm@11.15.1 install --frozen-lockfile && corepack pnpm@11.15.1 test"
+      "run": [
+        "corepack pnpm@11.15.1 install --frozen-lockfile",
+        "pnpm test"
       ]
     },
     "package-linux": {
-      "stage": "build",
+      "group": "package",
+      "needs": [
+        "quality"
+      ],
       "image": "node:22-bookworm",
       "network": "kiln-ci",
-      "needs": [
-        "validate"
-      ],
-      "command": [
-        "sh",
-        "-lc",
-        "echo release artifact > /artifacts/example.txt"
+      "run": [
+        "pnpm dist -- --linux"
       ]
     }
   }

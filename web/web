@@ -201,14 +201,17 @@ def render_build(build_dir, status):
     build_id = status["build_id"]
     state = status.get("state", "unknown")
     symbol, label, klass = state_label(state)
-    steps_html = []
-    for step_id, step in status.get("steps", {}).items():
-        ssymbol, slabel, sklass = state_label(step.get("state", "unknown"))
+    jobs_html = []
+    pipeline = status.get("pipeline")
+    jobs = pipeline.get("jobs", {}) if isinstance(pipeline, dict) else {}
+    for job_id, job in jobs.items():
+        ssymbol, slabel, sklass = state_label(job.get("state", "unknown"))
         log_html = "—"
-        log_name = step.get("log")
+        log_name = job.get("log")
         if isinstance(log_name, str) and (build_dir / log_name).is_file():
-            log_html = f'<a class="log-link" href="/build/{quote(build_id,safe="")}/logs/{quote(step_id,safe="")}">view log</a>'
-        steps_html.append(f"""<div class="step"><div class="stage muted">{esc(step.get('stage','—'))}</div><div class="step-name">{esc(step_id)}</div><div><span class="badge {sklass}">{ssymbol} {esc(slabel)}</span></div><div class="duration">{log_html}</div></div>""")
+            log_html = f'<a class="log-link" href="/build/{quote(build_id,safe="")}/logs/{quote(job_id,safe="")}">view log</a>'
+        group = job.get("group") or "—"
+        jobs_html.append(f"""<div class="step"><div class="stage muted">{esc(group)}</div><div class="step-name">{esc(job_id)}</div><div><span class="badge {sklass}">{ssymbol} {esc(slabel)}</span></div><div class="duration">{log_html}</div></div>""")
 
     pipeline_log = build_dir / "logs" / "pipeline.log"
     extra_logs = f'<p><a class="log-link" href="/build/{quote(build_id,safe="")}/logs/pipeline">View pipeline log</a></p>' if pipeline_log.is_file() else ""
@@ -221,7 +224,7 @@ def render_build(build_dir, status):
 <a class="back" href="/">← All builds</a>
 <div class="hero"><div><h1>{esc(status.get('project','?'))}</h1><div class="meta"><span>{esc(short_ref(status.get('ref','?')))}</span><span class="sha">{esc(status.get('sha',''))}</span><span>{esc(status.get('type','?'))}</span></div></div><span class="badge {klass}">{symbol} {esc(label)}</span></div>
 <div class="meta"><span>Duration: {esc(duration(status.get('duration_seconds')))}</span><span>Started: {esc(format_time(status.get('started_at')))}</span></div>
-<h2>Steps</h2><section class="panel">{''.join(steps_html) if steps_html else '<div class="empty">No steps.</div>'}</section>{extra_logs}
+<h2>Jobs</h2><section class="panel">{''.join(jobs_html) if jobs_html else '<div class="empty">No jobs.</div>'}</section>{extra_logs}
 <h2>Artifacts</h2><section class="panel">{''.join(artifact_html) if artifact_html else '<div class="empty">No artifacts.</div>'}</section>
 """
     return layout(
@@ -242,9 +245,11 @@ def render_log(build_dir, status, log_name):
     except OSError:
         return None
     notice = '<div class="notice">Showing the last 2 MiB. Use the Kiln CLI for the complete log.</div>' if truncated else ""
-    step = status.get("steps", {}).get(log_name)
-    if step is not None:
-        active = step.get("state") not in {"success", "failed", "skipped", "aborted"}
+    pipeline = status.get("pipeline")
+    jobs = pipeline.get("jobs", {}) if isinstance(pipeline, dict) else {}
+    job = jobs.get(log_name)
+    if job is not None:
+        active = job.get("state") not in {"success", "failed", "skipped", "aborted"}
     elif log_name == "pipeline":
         active = status.get("state") not in FINAL_STATES
     else:

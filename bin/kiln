@@ -91,12 +91,23 @@ def show_status(build):
         "pending": "WAIT",
         "aborted": "ABRT",
     }
-    for step_id, step in data.get("steps", {}).items():
-        marker = symbols.get(step.get("state"), str(step.get("state", "?")).upper())
+    prepare = data.get("prepare")
+    if isinstance(prepare, dict):
+        marker = symbols.get(prepare.get("state"), str(prepare.get("state", "?")).upper())
         extra = ""
-        if step.get("duration_seconds") is not None:
-            extra = f" ({fmt_duration(step['duration_seconds'])})"
-        print(f"{marker:4}  {step.get('stage', '-'):12} {step_id}{extra}")
+        if prepare.get("duration_seconds") is not None:
+            extra = f" ({fmt_duration(prepare['duration_seconds'])})"
+        print(f"{marker:4}  {'internal':12} prepare{extra}")
+
+    pipeline = data.get("pipeline")
+    jobs = pipeline.get("jobs", {}) if isinstance(pipeline, dict) else {}
+    for job_id, job in jobs.items():
+        marker = symbols.get(job.get("state"), str(job.get("state", "?")).upper())
+        extra = ""
+        if job.get("duration_seconds") is not None:
+            extra = f" ({fmt_duration(job['duration_seconds'])})"
+        group = job.get("group") or "-"
+        print(f"{marker:4}  {group:12} {job_id}{extra}")
 
 
 def show_logs(build, step=None):
@@ -136,10 +147,12 @@ def terminal_state(build, target):
         state = status.get("state")
         return state if state in FINAL_BUILD_STATES else None
 
-    step = status.get("steps", {}).get(target)
-    if step is None:
-        raise RuntimeError(f"unknown step: {target}")
-    state = step.get("state")
+    pipeline = status.get("pipeline")
+    jobs = pipeline.get("jobs", {}) if isinstance(pipeline, dict) else {}
+    job = jobs.get(target)
+    if job is None:
+        raise RuntimeError(f"unknown job: {target}")
+    state = job.get("state")
     return state if state in FINAL_STEP_STATES else None
 
 
@@ -250,8 +263,8 @@ def usage():
     print(
         """Usage:
   kiln status <latest|build-id|sha-prefix>
-  kiln logs <latest|build-id|sha-prefix> [step]
-  kiln watch <latest|build-id|sha-prefix> <step|pipeline>
+  kiln logs <latest|build-id|sha-prefix> [job]
+  kiln watch <latest|build-id|sha-prefix> <job|pipeline>
   kiln rerun <latest|build-id|sha-prefix>
   kiln doctor
 

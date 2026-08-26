@@ -6,15 +6,18 @@ ROOT_DIR="$(
     && pwd
 )"
 
-python3 \
-    "$ROOT_DIR/tests/test_static.py"
-
-python3 \
-    "$ROOT_DIR/tests/test_install_web.py"
-
-python3 \
-    "$ROOT_DIR/tests/test_branch_pipelines.py"
-
+for test in \
+    test_static.py \
+    test_install_web.py \
+    test_pipeline.py \
+    test_branch_pipelines.py \
+    test_controller_dag.py \
+    test_execute_modes.py \
+    test_job_status_consumers.py \
+    test_enqueue_atomic_publish.py
+do
+    python3 "$ROOT_DIR/tests/$test"
+done
 
 for unit in \
     "$ROOT_DIR/systemd/kiln-controller.service" \

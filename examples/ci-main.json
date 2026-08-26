@@ -7,16 +7,35 @@
     ]
   },
   "max_parallel": 3,
-  "steps": {
-    "quality": {
-      "stage": "tests",
+  "jobs": {
+    "lint": {
+      "group": "quality",
       "image": "node:22-bookworm",
       "network": "kiln-ci",
-      "needs": [],
-      "command": [
-        "sh",
-        "-lc",
-        "corepack pnpm@11.15.1 install --frozen-lockfile && corepack pnpm@11.15.1 test"
+      "run": [
+        "corepack pnpm@11.15.1 install --frozen-lockfile",
+        "pnpm lint"
+      ]
+    },
+    "tests": {
+      "group": "quality",
+      "image": "node:22-bookworm",
+      "network": "kiln-ci",
+      "run": [
+        "corepack pnpm@11.15.1 install --frozen-lockfile",
+        "pnpm test"
+      ]
+    },
+    "build": {
+      "group": "build-group",
+      "needs": [
+        "quality"
+      ],
+      "image": "node:22-bookworm",
+      "network": "kiln-ci",
+      "run": [
+        "corepack pnpm@11.15.1 install --frozen-lockfile",
+        "pnpm build"
       ]
     }
   }

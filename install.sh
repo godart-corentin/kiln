@@ -117,6 +117,8 @@ find /var/lib/kiln/builds -type d -exec chmod g-s {} +
 install -o root -g root -m 0755 "$ROOT_DIR/bin/kiln" /usr/local/bin/kiln
 install -o root -g root -m 0755 "$ROOT_DIR/web/web" /usr/local/libexec/kiln/web
 
+install -o root -g root -m 0644 "$ROOT_DIR/libexec/pipeline.py" /usr/local/libexec/kiln/pipeline.py
+
 for name in \
     controller enqueue execute notify-discord rerun doctor \
     project-create project-delete project-webhook-set \

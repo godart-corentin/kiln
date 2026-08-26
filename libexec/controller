@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import fcntl
-import fnmatch
+import importlib.util
 import json
 import os
 import pwd
@@ -19,14 +19,20 @@ LOCK_FILE = Path("/var/lib/kiln/locks/controller.lock")
 
 CI_PIPELINE_ROOT = ".kiln/pipelines"
 RELEASE_PIPELINE = ".kiln/release.json"
-LEGACY_PIPELINE = ".kiln/pipeline.json"
 MAX_PIPELINES = 64
 MAX_PIPELINE_BYTES = 256 * 1024
 
 PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
-STEP_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+JOB_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 BUILD_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+
+PIPELINE_MODULE_PATH = Path(__file__).resolve().with_name("pipeline.py")
+_PIPELINE_SPEC = importlib.util.spec_from_file_location("kiln_pipeline_schema", PIPELINE_MODULE_PATH)
+if _PIPELINE_SPEC is None or _PIPELINE_SPEC.loader is None:
+    raise RuntimeError(f"cannot load pipeline module: {PIPELINE_MODULE_PATH}")
+pipeline_schema = importlib.util.module_from_spec(_PIPELINE_SPEC)
+_PIPELINE_SPEC.loader.exec_module(pipeline_schema)
 
 
 class KilnError(Exception):
@@ -141,18 +147,6 @@ def load_config(project):
     if not expected_repo.is_dir():
         fail(f"repository missing: {expected_repo}")
 
-    legacy_pipeline = cfg.get("pipeline")
-    if legacy_pipeline is not None:
-        validate_repo_path(legacy_pipeline)
-
-    legacy_ci = cfg.get("ci")
-    if legacy_ci is not None:
-        if not isinstance(legacy_ci, dict):
-            fail("legacy ci config must be an object")
-        branches = legacy_ci.get("branches", [])
-        if not isinstance(branches, list) or any(not isinstance(branch, str) for branch in branches):
-            fail("legacy ci.branches invalid")
-
     release = cfg.get("release")
     if not isinstance(release, dict) or not isinstance(release.get("tag_pattern"), str):
         fail("release.tag_pattern is missing or invalid")
@@ -221,15 +215,10 @@ def load_pipeline_path(repo, sha, path):
     result = git(repo, "show", f"{sha}:{path}")
     if result.returncode:
         fail(f"cannot read {path}: {result.stderr.strip()}")
-    if len(result.stdout.encode()) > MAX_PIPELINE_BYTES:
+    raw = result.stdout.encode("utf-8")
+    if len(raw) > MAX_PIPELINE_BYTES:
         fail(f"pipeline too large: {path}")
-    try:
-        pipeline = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        fail(f"invalid pipeline JSON {path}: {exc}")
-    if not isinstance(pipeline, dict):
-        fail(f"pipeline must be a JSON object: {path}")
-    return pipeline
+    return raw
 
 
 def list_ci_pipeline_paths(repo, sha):
@@ -263,35 +252,6 @@ def list_ci_pipeline_paths(repo, sha):
     return sorted(paths)
 
 
-def validate_branch_trigger(path, pipeline):
-    trigger = pipeline.get("trigger")
-    if not isinstance(trigger, dict):
-        fail(f"{path}: trigger must be an object")
-    if trigger.get("type") != "branch":
-        fail(f"{path}: trigger.type must be 'branch'")
-
-    branches = trigger.get("branches")
-    if not isinstance(branches, list) or not branches or len(branches) > 64:
-        fail(f"{path}: trigger.branches must be a non-empty list")
-
-    normalized = []
-    for pattern in branches:
-        if (
-            not isinstance(pattern, str)
-            or not pattern
-            or len(pattern) > 255
-            or "\x00" in pattern
-            or pattern.startswith("refs/")
-        ):
-            fail(f"{path}: invalid branch pattern {pattern!r}")
-        normalized.append(pattern)
-
-    if len(set(normalized)) != len(normalized):
-        fail(f"{path}: duplicate branch patterns")
-
-    return normalized
-
-
 def job_branch(job):
     branch = job.get("branch")
     if isinstance(branch, str) and branch:
@@ -304,133 +264,76 @@ def job_branch(job):
     return None
 
 
+def parse_pipeline(raw, *, path, kind, cfg, branch=None):
+    try:
+        return pipeline_schema.load_pipeline_bytes(
+            raw,
+            kind=kind,
+            branch=branch,
+            default_max_parallel=cfg["runner"]["max_parallel"],
+            allowed_networks=tuple(cfg["runner"]["allowed_networks"]),
+        )
+    except pipeline_schema.PipelineError as exc:
+        fail(f"{path}: {exc}")
+
+
 def select_ci_pipeline(job, cfg):
     repo = Path(cfg["repository"])
     branch = job_branch(job)
     if not branch:
         fail("CI job does not identify a source branch")
 
-    paths = list_ci_pipeline_paths(repo, job["sha"])
+    matches = []
+    for path in list_ci_pipeline_paths(repo, job["sha"]):
+        raw = load_pipeline_path(repo, job["sha"], path)
+        try:
+            trigger = pipeline_schema.load_ci_trigger_bytes(raw)
+        except pipeline_schema.PipelineError as exc:
+            fail(f"{path}: {exc}")
+        candidate = {"trigger": trigger}
+        if pipeline_schema.matches_branch(candidate, branch):
+            matches.append((path, raw))
 
-    if paths:
-        matches = []
-        for path in paths:
-            pipeline = load_pipeline_path(repo, job["sha"], path)
-            patterns = validate_branch_trigger(path, pipeline)
-            if any(fnmatch.fnmatchcase(branch, pattern) for pattern in patterns):
-                matches.append((path, pipeline))
+    if len(matches) > 1:
+        names = ", ".join(path for path, _ in matches)
+        fail(f"branch {branch!r} matches multiple CI pipelines: {names}")
+    if not matches:
+        return None
 
-        if len(matches) > 1:
-            names = ", ".join(path for path, _ in matches)
-            fail(f"branch {branch!r} matches multiple CI pipelines: {names}")
-
-        return matches[0] if matches else None
-
-    # Temporary compatibility with Kiln 0.1.x projects. The old single
-    # pipeline remains branch-limited by the old server-side ci.branches list.
-    legacy_path = cfg.get("pipeline")
-    legacy_branches = cfg.get("ci", {}).get("branches", [])
-    if isinstance(legacy_path, str) and branch in legacy_branches:
-        return legacy_path, load_pipeline_path(repo, job["sha"], legacy_path)
-
-    return None
+    path, raw = matches[0]
+    return path, parse_pipeline(raw, path=path, kind="ci", cfg=cfg, branch=branch)
 
 
 def select_pipeline(job, cfg):
+    repo = Path(cfg["repository"])
     if job["type"] == "release":
-        repo = Path(cfg["repository"])
-        return RELEASE_PIPELINE, load_pipeline_path(repo, job["sha"], RELEASE_PIPELINE)
+        raw = load_pipeline_path(repo, job["sha"], RELEASE_PIPELINE)
+        return RELEASE_PIPELINE, parse_pipeline(
+            raw,
+            path=RELEASE_PIPELINE,
+            kind="release",
+            cfg=cfg,
+        )
 
     if job["type"] == "ci":
         return select_ci_pipeline(job, cfg)
 
     fail(f"unsupported job type: {job['type']}")
 
-
-def check_cycle(steps):
-    marks = {}
-
-    def visit(step_id):
-        if marks.get(step_id) == 1:
-            fail(f"dependency cycle involving {step_id}")
-        if marks.get(step_id) == 2:
-            return
-        marks[step_id] = 1
-        for dep in steps[step_id]["needs"]:
-            visit(dep)
-        marks[step_id] = 2
-
-    for step_id in steps:
-        visit(step_id)
-
-
 def resolve_pipeline(job, cfg, pipeline, pipeline_path):
     if not isinstance(pipeline, dict) or pipeline.get("schema") != 1:
         fail("pipeline.schema must be 1")
-    raw = pipeline.get("steps")
-    if not isinstance(raw, dict) or not raw:
-        fail("pipeline.steps must be non-empty")
+    jobs = pipeline.get("jobs")
+    groups = pipeline.get("groups")
+    if not isinstance(jobs, dict) or not jobs:
+        fail("normalized pipeline.jobs missing")
+    if not isinstance(groups, dict):
+        fail("normalized pipeline.groups missing")
 
     runner = cfg["runner"]
     requested = pipeline.get("max_parallel", runner["max_parallel"])
     if not isinstance(requested, int) or requested < 1:
         fail("pipeline.max_parallel invalid")
-
-    steps = {}
-    for step_id, spec in raw.items():
-        if not isinstance(step_id, str) or not STEP_RE.fullmatch(step_id):
-            fail(f"invalid step id: {step_id!r}")
-        if not isinstance(spec, dict):
-            fail(f"{step_id}: step must be object")
-
-        # `when` remains supported for 0.1.x compatibility. New repositories
-        # should normally separate CI and release into different files.
-        when = spec.get("when", "always")
-        if when not in ("always", "ci", "release"):
-            fail(f"{step_id}: invalid when")
-        if when not in ("always", job["type"]):
-            continue
-
-        stage = spec.get("stage")
-        image = spec.get("image")
-        command = spec.get("command")
-        needs = spec.get("needs", [])
-        network = spec.get("network", "none")
-
-        if not isinstance(stage, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,31}", stage):
-            fail(f"{step_id}: invalid stage")
-        if not isinstance(image, str) or not image or len(image) > 255 or any(ord(c) < 32 for c in image):
-            fail(f"{step_id}: invalid image")
-        if not isinstance(command, list) or not command or len(command) > 64:
-            fail(f"{step_id}: invalid command")
-        if any(not isinstance(arg, str) or "\x00" in arg for arg in command):
-            fail(f"{step_id}: invalid command argument")
-        if not isinstance(needs, list) or len(set(needs)) != len(needs):
-            fail(f"{step_id}: invalid needs")
-        if any(not isinstance(dep, str) or not STEP_RE.fullmatch(dep) for dep in needs):
-            fail(f"{step_id}: invalid dependency")
-        if network not in runner["allowed_networks"]:
-            fail(f"{step_id}: network {network!r} not allowed")
-
-        steps[step_id] = {
-            "stage": stage,
-            "image": image,
-            "command": command,
-            "needs": needs,
-            "network": network,
-            "when": when,
-        }
-
-    if not steps:
-        fail(f"no steps active for {job['type']}")
-
-    for step_id, spec in steps.items():
-        for dep in spec["needs"]:
-            if dep not in steps:
-                fail(f"{step_id}: inactive/missing dependency {dep}")
-            if dep == step_id:
-                fail(f"{step_id}: self dependency")
-    check_cycle(steps)
 
     runtime = {
         "schema": 1,
@@ -448,38 +351,41 @@ def resolve_pipeline(job, cfg, pipeline, pipeline_path):
             "pids_limit": runner["pids_limit"],
             "timeout_seconds": runner["timeout_seconds"],
         },
-        "steps": steps,
+        "groups": json.loads(json.dumps(groups)),
+        "jobs": json.loads(json.dumps(jobs)),
     }
 
     branch = job_branch(job)
     if branch:
         runtime["branch"] = branch
+    if job.get("tag"):
+        runtime["tag"] = job["tag"]
 
     return runtime
 
 
 def write_makefile(build_dir, runtime):
-    step_ids = list(runtime["steps"])
+    job_ids = list(runtime["jobs"])
     lines = [
         ".DELETE_ON_ERROR:",
-        ".PHONY: all " + " ".join(f"step-{step}" for step in step_ids),
+        ".PHONY: all " + " ".join(f"job-{job_id}" for job_id in job_ids),
         "",
-        "all: " + " ".join(f"step-{step}" for step in step_ids),
+        "all: " + " ".join(f"job-{job_id}" for job_id in job_ids),
         "",
     ]
     build = shlex.quote(runtime["build_id"])
-    for step_id, spec in runtime["steps"].items():
-        deps = " ".join(f"step-{dep}" for dep in spec["needs"])
-        lines.append((f"step-{step_id}: {deps}").rstrip())
+    for job_id, spec in runtime["jobs"].items():
+        deps = " ".join(f"job-{dep}" for dep in spec["resolved_needs"])
+        lines.append((f"job-{job_id}: {deps}").rstrip())
         lines.append(
             "\t@/usr/local/libexec/kiln/execute "
-            f"{build} {shlex.quote(step_id)}"
+            f"{build} {shlex.quote(job_id)}"
         )
         lines.append("")
     (build_dir / "pipeline.mk").write_text("\n".join(lines), encoding="utf-8")
 
-
 def initial_status(job, pipeline_path=None):
+    started_at = iso()
     status = {
         "schema": 1,
         "build_id": job["id"],
@@ -489,13 +395,21 @@ def initial_status(job, pipeline_path=None):
         "ref": job["ref"],
         "type": job["type"],
         "event": job.get("event"),
-        "pipeline": pipeline_path,
+        "pipeline_path": pipeline_path,
+        "pipeline": None,
+        "prepare": {
+            "state": "running",
+            "exit_code": None,
+            "started_at": started_at,
+            "finished_at": None,
+            "duration_seconds": None,
+            "log": "logs/prepare.log",
+        },
         "state": "preparing",
         "received_at": job["received_at"],
-        "started_at": iso(),
+        "started_at": started_at,
         "finished_at": None,
         "duration_seconds": None,
-        "steps": {},
     }
     branch = job_branch(job)
     if branch:
@@ -511,7 +425,7 @@ def create_build_skeleton(job, pipeline_path=None):
         fail(f"build already exists: {build_dir}")
 
     build_dir.mkdir(mode=0o750)
-    for name in ("src", "work", "logs", "artifacts"):
+    for name in ("src", "work", "logs", "artifacts", "commands"):
         (build_dir / name).mkdir(mode=0o750)
 
     write_json(build_dir / "job.json", job)
@@ -519,24 +433,40 @@ def create_build_skeleton(job, pipeline_path=None):
     return build_dir
 
 
+def _status_job(spec):
+    return {
+        "group": spec.get("group"),
+        "needs": list(spec.get("needs", [])),
+        "resolved_needs": list(spec.get("resolved_needs", [])),
+        "inputs": list(spec.get("inputs", [])),
+        "resolved_inputs": list(spec.get("resolved_inputs", [])),
+        "state": "pending",
+        "exit_code": None,
+        "started_at": None,
+        "finished_at": None,
+        "duration_seconds": None,
+        "log": None,
+    }
+
+
 def start_pipeline_status(build_dir, status, runtime):
-    status["pipeline"] = runtime["pipeline"]
-    status["steps"]["prepare"] = {
-        "stage": "internal",
+    prepared_at = iso()
+    status["pipeline_path"] = runtime["pipeline"]
+    status["prepare"].update({
         "state": "success",
         "exit_code": 0,
-        "log": "logs/prepare.log",
+        "finished_at": prepared_at,
+        "duration_seconds": elapsed(status["prepare"]["started_at"]),
+    })
+    jobs = {}
+    for job_id, spec in runtime["jobs"].items():
+        job_status = _status_job(spec)
+        job_status["log"] = f"logs/{job_id}.log"
+        jobs[job_id] = job_status
+    status["pipeline"] = {
+        "groups": json.loads(json.dumps(runtime["groups"])),
+        "jobs": jobs,
     }
-    for step_id, spec in runtime["steps"].items():
-        status["steps"][step_id] = {
-            "stage": spec["stage"],
-            "state": "pending",
-            "exit_code": None,
-            "started_at": None,
-            "finished_at": None,
-            "duration_seconds": None,
-            "log": f"logs/{step_id}.log",
-        }
     status["state"] = "running"
     write_json(build_dir / "status.json", status)
 
@@ -547,24 +477,28 @@ def fail_status(build_dir, message):
     status["state"] = "failed"
     status["finished_at"] = iso()
     status["duration_seconds"] = elapsed(status["started_at"])
-    if status.get("steps", {}).get("prepare") is None:
-        status["steps"]["prepare"] = {
-            "stage": "internal",
+
+    prepare = status.get("prepare")
+    if isinstance(prepare, dict) and prepare.get("state") == "running":
+        prepare.update({
             "state": "failed",
             "exit_code": None,
             "error": message,
-            "log": "logs/prepare.log",
-        }
+            "finished_at": iso(),
+            "duration_seconds": elapsed(prepare["started_at"]),
+        })
     else:
         status["error"] = message
 
-    for step in status.get("steps", {}).values():
-        if step.get("state") == "running":
-            step["state"] = "failed"
-            step["error"] = message
-        elif step.get("state") == "pending":
-            step["state"] = "skipped"
-            step["reason"] = "controller_error"
+    pipeline = status.get("pipeline")
+    jobs = pipeline.get("jobs", {}) if isinstance(pipeline, dict) else {}
+    for job_status in jobs.values():
+        if job_status.get("state") == "running":
+            job_status["state"] = "failed"
+            job_status["error"] = message
+        elif job_status.get("state") == "pending":
+            job_status["state"] = "skipped"
+            job_status["reason"] = "controller_error"
     write_json(path, status)
 
 
@@ -572,20 +506,19 @@ def finalize(build_dir, make_rc):
     path = build_dir / "status.json"
     status = read_json(path)
     failed = make_rc != 0
-    for step_id, step in status["steps"].items():
-        if step_id == "prepare":
-            continue
-        if step["state"] == "pending":
-            step["state"] = "skipped"
-            step["reason"] = "dependency_failed"
-        elif step["state"] not in ("success", "skipped"):
+    pipeline = status.get("pipeline")
+    jobs = pipeline.get("jobs", {}) if isinstance(pipeline, dict) else {}
+    for job_status in jobs.values():
+        if job_status["state"] == "pending":
+            job_status["state"] = "skipped"
+            job_status["reason"] = "dependency_failed"
+        elif job_status["state"] not in ("success", "skipped"):
             failed = True
     status["state"] = "failed" if failed else "success"
     status["finished_at"] = iso()
     status["duration_seconds"] = elapsed(status["started_at"])
     write_json(path, status)
     return status["state"]
-
 
 def claim():
     for source in sorted(INCOMING.glob("*.json")):
@@ -655,13 +588,15 @@ def recover_stale():
                 status["finished_at"] = iso()
                 if status.get("started_at"):
                     status["duration_seconds"] = elapsed(status["started_at"])
-                for step in status.get("steps", {}).values():
-                    if step.get("state") == "running":
-                        step["state"] = "failed"
-                        step["error"] = "controller interrupted"
-                    elif step.get("state") == "pending":
-                        step["state"] = "skipped"
-                        step["reason"] = "controller_interrupted"
+                pipeline = status.get("pipeline")
+                jobs = pipeline.get("jobs", {}) if isinstance(pipeline, dict) else {}
+                for job_status in jobs.values():
+                    if job_status.get("state") == "running":
+                        job_status["state"] = "failed"
+                        job_status["error"] = "controller interrupted"
+                    elif job_status.get("state") == "pending":
+                        job_status["state"] = "skipped"
+                        job_status["reason"] = "controller_interrupted"
                 write_json(status_path, status)
 
         cleanup_pin(job, cfg)

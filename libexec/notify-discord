@@ -62,23 +62,29 @@ def shorten(text, limit=900):
 
 def error_excerpt(build_dir, status):
     failed = None
-    for step_id, step in reversed(list(status.get("steps", {}).items())):
-        if step.get("state") == "failed":
-            failed = (step_id, step)
+    pipeline = status.get("pipeline")
+    jobs = pipeline.get("jobs", {}) if isinstance(pipeline, dict) else {}
+    for job_id, job in reversed(list(jobs.items())):
+        if job.get("state") == "failed":
+            failed = (job_id, job)
             break
+    if failed is None:
+        prepare = status.get("prepare")
+        if isinstance(prepare, dict) and prepare.get("state") == "failed":
+            failed = ("prepare", prepare)
     if failed is None:
         return None, None
 
-    step_id, step = failed
-    log_path = build_dir / step.get("log", "")
+    job_id, job = failed
+    log_path = build_dir / job.get("log", "")
     if not log_path.is_file():
-        error = step.get("error")
-        return step_id, sanitize(str(error)) if error else "Step failed."
+        error = job.get("error")
+        return job_id, sanitize(str(error)) if error else "Job failed."
 
     text = sanitize(read_log_tail(log_path))
     lines = [line.rstrip() for line in text.splitlines() if line.strip()]
     if not lines:
-        return step_id, "Step failed with an empty log."
+        return job_id, "Job failed with an empty log."
 
     error_index = None
     for index in range(len(lines) - 1, -1, -1):
@@ -96,7 +102,7 @@ def error_excerpt(build_dir, status):
         end = min(len(lines), error_index + 12)
         selected = lines[start:end]
 
-    return step_id, shorten("\n".join(selected))
+    return job_id, shorten("\n".join(selected))
 
 
 def short_ref(ref):
@@ -114,8 +120,8 @@ def duration(value):
     return f"{minutes}m{seconds:02d}s" if minutes else f"{seconds}s"
 
 
-def stage_title(stage):
-    return stage.replace("_", " ").replace("-", " ").title()
+def group_title(group):
+    return group.replace("_", " ").replace("-", " ").title()
 
 
 def build_url(build_id):
@@ -145,12 +151,12 @@ def render_message(build_dir, status):
         "",
     ]
 
-    stages = {}
-    for step_id, step in status.get("steps", {}).items():
-        if step_id == "prepare":
-            continue
-        stage = step.get("stage", "other")
-        stages.setdefault(stage, []).append((step_id, step))
+    groups = {}
+    pipeline = status.get("pipeline")
+    jobs = pipeline.get("jobs", {}) if isinstance(pipeline, dict) else {}
+    for job_id, job in jobs.items():
+        group = job.get("group") or "other"
+        groups.setdefault(group, []).append((job_id, job))
 
     icons = {
         "success": "✅",
@@ -160,11 +166,11 @@ def render_message(build_dir, status):
         "pending": "⏳",
         "aborted": "🛑",
     }
-    for stage, steps in stages.items():
-        lines.append(f"**{stage_title(stage)}**")
-        for step_id, step in steps:
-            step_state = step.get("state", "unknown")
-            lines.append(f"{icons.get(step_state, '•')} {step_id}")
+    for group, grouped_jobs in groups.items():
+        lines.append(f"**{group_title(group)}**")
+        for job_id, job in grouped_jobs:
+            job_state = job.get("state", "unknown")
+            lines.append(f"{icons.get(job_state, '•')} {job_id}")
         lines.append("")
 
     lines.append("Duration: " + duration(status.get("duration_seconds")))
@@ -174,11 +180,11 @@ def render_message(build_dir, status):
         lines.extend(["", f"🔗 {url}"])
 
     if not success:
-        step_id, excerpt = error_excerpt(build_dir, status)
+        job_id, excerpt = error_excerpt(build_dir, status)
         if excerpt:
             lines.extend([
                 "",
-                f"**Last error — {step_id}**",
+                f"**Last error — {job_id}**",
                 "```text",
                 excerpt,
                 "```",

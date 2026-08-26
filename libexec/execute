@@ -3,6 +3,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -11,7 +12,7 @@ from pathlib import Path
 
 BUILDS = Path("/var/lib/kiln/builds")
 BUILD_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-STEP_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+JOB_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 
 
 class KilnError(Exception):
@@ -53,19 +54,51 @@ def write_json(path, data):
         tmp.unlink(missing_ok=True)
 
 
-def update_step(build_dir, step_id, changes):
+def update_job(build_dir, job_id, changes):
     lock_path = build_dir / "status.lock"
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o640)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         path = build_dir / "status.json"
         status = read_json(path)
-        if step_id not in status.get("steps", {}):
-            fail(f"step {step_id!r} missing from status")
-        status["steps"][step_id].update(changes)
+        pipeline = status.get("pipeline")
+        jobs = pipeline.get("jobs", {}) if isinstance(pipeline, dict) else {}
+        if job_id not in jobs:
+            fail(f"job {job_id!r} missing from status")
+        jobs[job_id].update(changes)
         write_json(path, status)
     finally:
         os.close(fd)
+
+
+def render_run_script(commands):
+    lines = ["#!/bin/sh", "set -eu"]
+    for command in commands:
+        lines.append(f"printf '%s\\n' {shlex.quote('$ ' + command)}")
+        lines.append(command)
+    lines.append("")
+    return "\n".join(lines)
+
+
+def prepare_execution(build_dir, job_id, job):
+    modes = [mode for mode in ("run", "script", "command") if mode in job]
+    if len(modes) != 1:
+        fail(f"job {job_id!r} has invalid execution mode")
+
+    mode = modes[0]
+    if mode == "run":
+        commands_dir = build_dir / "commands"
+        commands_dir.mkdir(mode=0o750, parents=True, exist_ok=True)
+        script_path = commands_dir / f"{job_id}.sh"
+        script_path.write_text(render_run_script(job["run"]), encoding="utf-8")
+        script_path.chmod(0o600)
+        mount = f"type=bind,src={script_path},dst=/run/kiln/job.sh,readonly"
+        return [mount], ["/bin/sh", "/run/kiln/job.sh"]
+
+    if mode == "script":
+        return [], [f"/workspace/{job['script']}"]
+
+    return [], list(job["command"])
 
 
 def prepare_workspace(src_dir, work_dir, log):
@@ -108,46 +141,44 @@ def prepare_workspace(src_dir, work_dir, log):
     log.flush()
 
 
-def container_name(build_id, step_id):
-    return f"kiln-{build_id[-32:]}-{step_id}"[:120]
+def container_name(build_id, job_id):
+    return f"kiln-{build_id[-32:]}-{job_id}"[:120]
 
 
 def main():
     if len(sys.argv) != 3:
-        print("usage: execute <build-id> <step-id>", file=sys.stderr)
+        print("usage: execute <build-id> <job-id>", file=sys.stderr)
         return 2
 
-    build_id, step_id = sys.argv[1:]
+    build_id, job_id = sys.argv[1:]
     if not BUILD_RE.fullmatch(build_id):
         fail("invalid build id")
-    if not STEP_RE.fullmatch(step_id):
-        fail("invalid step id")
+    if not JOB_RE.fullmatch(job_id):
+        fail("invalid job id")
 
     build_dir = BUILDS / build_id
     runtime = read_json(build_dir / "runtime.json")
     if runtime.get("build_id") != build_id:
         fail("runtime build id mismatch")
-    steps = runtime.get("steps")
-    if not isinstance(steps, dict):
-        fail("invalid runtime steps")
-    if step_id not in steps:
-        fail(f"unknown step: {step_id}")
+    jobs = runtime.get("jobs")
+    if not isinstance(jobs, dict):
+        fail("invalid runtime jobs")
+    if job_id not in jobs:
+        fail(f"unknown job: {job_id}")
 
-    step = steps[step_id]
-    if step.get("when") == "release" and runtime.get("job_type") != "release":
-        fail("release step cannot run for a CI job")
+    job = jobs[job_id]
 
     src_dir = build_dir / "src"
-    work_dir = build_dir / "work" / step_id
-    artifacts_dir = build_dir / "artifacts" / step_id
-    log_path = build_dir / "logs" / f"{step_id}.log"
+    work_dir = build_dir / "work" / job_id
+    artifacts_dir = build_dir / "artifacts" / job_id
+    log_path = build_dir / "logs" / f"{job_id}.log"
 
     artifacts_dir.mkdir(mode=0o750, parents=True, exist_ok=True)
 
     started = datetime.now(timezone.utc)
-    update_step(
+    update_job(
         build_dir,
-        step_id,
+        job_id,
         {
             "state": "running",
             "started_at": iso(started),
@@ -160,16 +191,16 @@ def main():
     uid = os.geteuid()
     gid = os.getegid()
     runner = runtime["runner"]
-    name = container_name(build_id, step_id)
+    name = container_name(build_id, job_id)
     rc = 1
     error = None
 
     with log_path.open("w", encoding="utf-8") as log:
         log.write(
             f"build: {build_id}\n"
-            f"step: {step_id}\n"
-            f"image: {step['image']}\n"
-            f"network: {step['network']}\n"
+            f"job: {job_id}\n"
+            f"image: {job['image']}\n"
+            f"network: {job['network']}\n"
             f"limits: cpus={runner['cpus']} memory={runner['memory']} "
             f"pids={runner['pids_limit']} timeout={runner['timeout_seconds']}s\n\n"
         )
@@ -182,13 +213,14 @@ def main():
             log.write(f"\nKILN ERROR: {error}\n")
             rc = 1
         else:
+            extra_mounts, execution_argv = prepare_execution(build_dir, job_id, job)
             docker_command = [
                 "/usr/bin/docker", "run",
                 "--rm",
                 "--name", name,
                 "--init",
                 "--pull=missing",
-                "--network", step["network"],
+                "--network", job["network"],
                 "--cpus", runner["cpus"],
                 "--memory", runner["memory"],
                 "--pids-limit", str(runner["pids_limit"]),
@@ -202,16 +234,17 @@ def main():
                 "--env", f"KILN_PROJECT={runtime['project']}",
                 "--env", f"KILN_SHA={runtime['sha']}",
                 "--env", f"KILN_REF={runtime['ref']}",
-                "--env", f"KILN_TYPE={runtime['job_type']}",
-                "--env", f"KILN_STEP={step_id}",
+                "--env", f"KILN_JOB_TYPE={runtime['job_type']}",
+                "--env", f"KILN_JOB={job_id}",
                 "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m",
                 "--mount", f"type=bind,src={work_dir},dst=/workspace",
                 "--mount", f"type=bind,src={artifacts_dir},dst=/artifacts",
                 "--label", f"kiln.build_id={build_id}",
-                "--label", f"kiln.step={step_id}",
-                step["image"],
-                *step["command"],
+                "--label", f"kiln.job={job_id}",
             ]
+            for mount in extra_mounts:
+                docker_command.extend(["--mount", mount])
+            docker_command.extend([job["image"], *execution_argv])
 
             process = subprocess.Popen(
                 docker_command,
@@ -248,9 +281,9 @@ def main():
     }
     if error:
         changes["error"] = error
-    update_step(build_dir, step_id, changes)
+    update_job(build_dir, job_id, changes)
 
-    print(f"{step_id}: {state} ({duration:.3f}s)")
+    print(f"{job_id}: {state} ({duration:.3f}s)")
     return rc
 
 

@@ -43,13 +43,24 @@ def pipeline(branches, name):
             "type": "branch",
             "branches": branches,
         },
-        "steps": {
+        "jobs": {
             name: {
-                "stage": "tests",
-                "image": "alpine:3.20",
+                "image": "alpine:3.22",
                 "network": "none",
-                "needs": [],
-                "command": ["true"],
+                "run": ["true"],
+            }
+        },
+    }
+
+
+def release_pipeline(name="release"):
+    return {
+        "schema": 1,
+        "jobs": {
+            name: {
+                "image": "alpine:3.22",
+                "network": "none",
+                "run": ["true"],
             }
         },
     }
@@ -78,7 +89,7 @@ def make_repo(files):
     run("git", "commit", "-m", "test", cwd=work)
     sha = git_output("git", "rev-parse", "HEAD", cwd=work)
     run("git", "clone", "--bare", str(work), str(bare))
-    return temp, bare, sha
+    return temp, work, bare, sha
 
 
 def base_config(repo):
@@ -143,7 +154,7 @@ def test_enqueue_classifies_every_branch_as_ci():
 
 
 def test_branch_pipeline_selection():
-    temp, repo, sha = make_repo({
+    temp, _work, repo, sha = make_repo({
         ".kiln/pipelines/main.json": pipeline(["main"], "main-check"),
         ".kiln/pipelines/features.json": pipeline(["feature/*"], "feature-check"),
     })
@@ -151,11 +162,11 @@ def test_branch_pipeline_selection():
         cfg = base_config(repo)
         path, selected = controller.select_pipeline(ci_job(sha, "main"), cfg)
         assert_equal(path, ".kiln/pipelines/main.json", "main pipeline")
-        assert "main-check" in selected["steps"]
+        assert "main-check" in selected["jobs"]
 
         path, selected = controller.select_pipeline(ci_job(sha, "feature/login"), cfg)
         assert_equal(path, ".kiln/pipelines/features.json", "feature pipeline")
-        assert "feature-check" in selected["steps"]
+        assert "feature-check" in selected["jobs"]
 
         result = controller.select_pipeline(ci_job(sha, "docs"), cfg)
         assert_equal(result, None, "unmatched branch")
@@ -163,8 +174,29 @@ def test_branch_pipeline_selection():
         temp.cleanup()
 
 
+def test_selection_uses_exact_job_sha():
+    temp, work, repo, old_sha = make_repo({
+        ".kiln/pipelines/main.json": pipeline(["main"], "old-job"),
+    })
+    try:
+        write_json(work / ".kiln/pipelines/main.json", pipeline(["main"], "new-job"))
+        run("git", "add", ".", cwd=work)
+        run("git", "commit", "-m", "new pipeline", cwd=work)
+        new_sha = git_output("git", "rev-parse", "HEAD", cwd=work)
+        run("git", "push", str(repo), "main", cwd=work)
+
+        cfg = base_config(repo)
+        _path, old = controller.select_pipeline(ci_job(old_sha, "main"), cfg)
+        _path, new = controller.select_pipeline(ci_job(new_sha, "main"), cfg)
+        assert "old-job" in old["jobs"]
+        assert "new-job" not in old["jobs"]
+        assert "new-job" in new["jobs"]
+    finally:
+        temp.cleanup()
+
+
 def test_multiple_branch_pipeline_matches_fail():
-    temp, repo, sha = make_repo({
+    temp, _work, repo, sha = make_repo({
         ".kiln/pipelines/all.json": pipeline(["feature/*"], "all-check"),
         ".kiln/pipelines/special.json": pipeline(["feature/special"], "special-check"),
     })
@@ -181,57 +213,48 @@ def test_multiple_branch_pipeline_matches_fail():
         temp.cleanup()
 
 
-def test_release_uses_fixed_release_pipeline():
-    temp, repo, sha = make_repo({
+def test_release_uses_only_fixed_release_pipeline():
+    temp, _work, repo, sha = make_repo({
         ".kiln/pipelines/main.json": pipeline(["main"], "main-check"),
-        ".kiln/release.json": {
-            "schema": 1,
-            "steps": {
-                "release": {
-                    "stage": "release",
-                    "image": "alpine:3.20",
-                    "network": "none",
-                    "needs": [],
-                    "command": ["true"],
-                }
-            },
-        },
+        ".kiln/release.json": release_pipeline("release-job"),
     })
     try:
         cfg = base_config(repo)
         path, selected = controller.select_pipeline(release_job(sha), cfg)
         assert_equal(path, ".kiln/release.json", "release pipeline")
-        assert "release" in selected["steps"]
+        assert "release-job" in selected["jobs"]
+        assert "main-check" not in selected["jobs"]
     finally:
         temp.cleanup()
 
 
-def test_legacy_pipeline_only_matches_legacy_branches():
-    temp, repo, sha = make_repo({
-        ".kiln/pipeline.json": {
-            "schema": 1,
-            "steps": {
-                "legacy": {
-                    "stage": "tests",
-                    "image": "alpine:3.20",
-                    "network": "none",
-                    "needs": [],
-                    "command": ["true"],
-                }
-            },
-        },
+def test_release_requires_fixed_release_pipeline():
+    temp, _work, repo, sha = make_repo({
+        ".kiln/pipelines/main.json": pipeline(["main"], "main-check"),
+    })
+    try:
+        cfg = base_config(repo)
+        try:
+            controller.select_pipeline(release_job(sha), cfg)
+        except controller.KilnError as exc:
+            if ".kiln/release.json" not in str(exc):
+                raise AssertionError(f"unexpected error: {exc}")
+        else:
+            raise AssertionError("expected missing release pipeline failure")
+    finally:
+        temp.cleanup()
+
+
+def test_legacy_pipeline_is_not_used():
+    temp, _work, repo, sha = make_repo({
+        ".kiln/pipeline.json": pipeline(["main"], "legacy"),
     })
     try:
         cfg = base_config(repo)
         cfg["pipeline"] = ".kiln/pipeline.json"
         cfg["ci"] = {"branches": ["main"]}
-
-        path, selected = controller.select_pipeline(ci_job(sha, "main"), cfg)
-        assert_equal(path, ".kiln/pipeline.json", "legacy main pipeline")
-        assert "legacy" in selected["steps"]
-
-        result = controller.select_pipeline(ci_job(sha, "feature/foo"), cfg)
-        assert_equal(result, None, "legacy feature branch")
+        result = controller.select_pipeline(ci_job(sha, "main"), cfg)
+        assert_equal(result, None, "legacy pipeline must be ignored")
     finally:
         temp.cleanup()
 
@@ -240,9 +263,11 @@ def main():
     tests = [
         test_enqueue_classifies_every_branch_as_ci,
         test_branch_pipeline_selection,
+        test_selection_uses_exact_job_sha,
         test_multiple_branch_pipeline_matches_fail,
-        test_release_uses_fixed_release_pipeline,
-        test_legacy_pipeline_only_matches_legacy_branches,
+        test_release_uses_only_fixed_release_pipeline,
+        test_release_requires_fixed_release_pipeline,
+        test_legacy_pipeline_is_not_used,
     ]
 
     for test in tests:
