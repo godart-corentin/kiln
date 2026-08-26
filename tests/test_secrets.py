@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SECRETS_MODULE = ROOT / "libexec" / "secrets.py"
+SECRETS_MODULE = ROOT / "libexec" / "kiln_secrets.py"
 CLI_PATH = ROOT / "bin" / "kiln"
 
 

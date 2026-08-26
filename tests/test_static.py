@@ -12,7 +12,7 @@ PYTHON_FILES = [
     ROOT / "libexec" / "controller",
     ROOT / "libexec" / "pipeline.py",
     ROOT / "libexec" / "artifacts.py",
-    ROOT / "libexec" / "secrets.py",
+    ROOT / "libexec" / "kiln_secrets.py",
     ROOT / "libexec" / "enqueue",
     ROOT / "libexec" / "execute",
     ROOT / "libexec" / "notify-discord",

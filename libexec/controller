@@ -37,7 +37,7 @@ _PIPELINE_SPEC.loader.exec_module(pipeline_schema)
 
 SECRETS_ROOT = Path("/etc/kiln/secrets")
 SECRET_STAGING = Path("/var/lib/kiln/secret-staging")
-SECRETS_MODULE_PATH = Path(__file__).resolve().with_name("secrets.py")
+SECRETS_MODULE_PATH = Path(__file__).resolve().with_name("kiln_secrets.py")
 _SECRETS_SPEC = importlib.util.spec_from_file_location("kiln_secrets", SECRETS_MODULE_PATH)
 if _SECRETS_SPEC is None or _SECRETS_SPEC.loader is None:
     raise RuntimeError(f"cannot load secrets module: {SECRETS_MODULE_PATH}")

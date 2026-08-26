@@ -15,6 +15,7 @@ for test in \
     test_pipeline.py \
     test_artifacts.py \
     test_secrets.py \
+    test_import_shadowing.py \
     test_branch_pipelines.py \
     test_controller_dag.py \
     test_execute_modes.py \

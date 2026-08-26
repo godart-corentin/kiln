@@ -113,6 +113,8 @@ for project_config in /etc/kiln/projects/*.json; do
     install -d -o root -g kiln -m 0750 "/etc/kiln/secrets/$project_name"
 done
 install -d -o root -g root -m 0755 /usr/local/libexec/kiln /usr/local/libexec/kiln/git-hooks
+# Remove the old project module name: it shadows Python stdlib secrets in enqueue.
+rm -f /usr/local/libexec/kiln/secrets.py
 
 # CLI readers can traverse Kiln state and read build output, but not queue/secrets.
 setfacl -m g:kiln-readers:--x /var/lib/kiln
@@ -136,7 +138,7 @@ find /usr/local/share/kiln/web-src -type d -exec chmod 0755 {} +
 find /usr/local/share/kiln/web-src -type f -exec chmod 0644 {} +
 chmod 0755 /usr/local/share/kiln/web-src/server/kiln_web.py
 
-for module in pipeline.py artifacts.py secrets.py; do
+for module in pipeline.py artifacts.py kiln_secrets.py; do
     install -o root -g root -m 0644 "$ROOT_DIR/libexec/$module" "/usr/local/libexec/kiln/$module"
 done
 
