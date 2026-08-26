@@ -102,7 +102,9 @@ install -d -o kiln -g kiln -m 0750 \
     /var/lib/kiln/queue/running \
     /var/lib/kiln/builds \
     /var/lib/kiln/locks
-install -d -o kiln -g kiln -m 0700 /var/lib/kiln/secret-staging
+install -d -o kiln -g kiln -m 0700 \
+    /var/lib/kiln/secret-staging \
+    /var/lib/kiln/job-runtime
 
 install -d -o root -g root -m 0755 /etc/kiln /etc/kiln/projects
 install -d -o root -g kiln -m 0750 /etc/kiln/secrets

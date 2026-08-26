@@ -58,6 +58,7 @@ for path in \
     /var/lib/kiln/queue/running \
     /var/lib/kiln/builds \
     /var/lib/kiln/secret-staging \
+    /var/lib/kiln/job-runtime \
     /etc/kiln/projects \
     /etc/kiln/secrets \
     /usr/local/libexec/kiln/controller

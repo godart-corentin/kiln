@@ -25,6 +25,7 @@ _ARTIFACTS_SPEC.loader.exec_module(artifacts_schema)
 
 SECRETS_ROOT = Path("/etc/kiln/secrets")
 SECRET_STAGING = Path("/var/lib/kiln/secret-staging")
+JOB_RUNTIME = Path("/var/lib/kiln/job-runtime")
 SECRETS_MODULE_PATH = Path(__file__).resolve().with_name("kiln_secrets.py")
 _SECRETS_SPEC = importlib.util.spec_from_file_location("kiln_secrets", SECRETS_MODULE_PATH)
 if _SECRETS_SPEC is None or _SECRETS_SPEC.loader is None:
@@ -217,6 +218,7 @@ def build_public_env(runtime, job_id, job, input_roots):
     if tag:
         env["KILN_TAG"] = tag
     env.update(job.get("env", {}))
+    env.setdefault("XDG_RUNTIME_DIR", "/run/kiln/tmp")
     env.setdefault("TMPDIR", "/run/kiln/tmp")
     env.setdefault("TMP", "/run/kiln/tmp")
     env.setdefault("TEMP", "/run/kiln/tmp")
@@ -228,6 +230,27 @@ def build_public_env(runtime, job_id, job, input_roots):
         aliases.add(key)
         env[key] = f"/run/kiln/inputs/{producer}"
     return env
+
+
+def prepare_job_home(build_id, job_id):
+    job_root = JOB_RUNTIME / build_id / job_id
+    shutil.rmtree(job_root, ignore_errors=True)
+
+    home = job_root / "home"
+    home.mkdir(mode=0o700, parents=True, exist_ok=False)
+    home.chmod(0o700)
+
+    return home, f"type=bind,src={home},dst=/run/kiln/home"
+
+
+def cleanup_job_runtime(build_id, job_id):
+    build_root = JOB_RUNTIME / build_id
+    shutil.rmtree(build_root / job_id, ignore_errors=True)
+
+    try:
+        build_root.rmdir()
+    except (FileNotFoundError, OSError):
+        pass
 
 
 def collect_job_artifacts(build_dir, work_dir, job_id, job):
@@ -500,6 +523,12 @@ def main():
 
             extra_mounts.extend(tools_mounts)
             public_env = build_public_env(runtime, job_id, job, input_roots)
+            _host_home, home_mount = prepare_job_home(
+                build_id,
+                job_id,
+            )
+            extra_mounts.append(home_mount)
+
             docker_command = [
                 "/usr/bin/docker", "run",
                 "--rm",
@@ -516,7 +545,6 @@ def main():
                 "--workdir", "/workspace",
                 "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=512m",
                 "--tmpfs", f"/run/kiln/tmp:rw,nosuid,nodev,exec,size=512m,uid={uid},gid={gid},mode=700",
-                "--tmpfs", f"/run/kiln/home:rw,nosuid,nodev,exec,size=512m,uid={uid},gid={gid},mode=700",
                 "--mount", f"type=bind,src={work_dir},dst=/workspace",
                 "--label", f"kiln.build_id={build_id}",
                 "--label", f"kiln.job={job_id}",
@@ -579,6 +607,7 @@ def main():
                 collected = []
 
     cleanup_secret_stage(build_id, job_id)
+    cleanup_job_runtime(build_id, job_id)
     finished = datetime.now(timezone.utc)
     duration = round((finished - started).total_seconds(), 3)
     state = "success" if rc == 0 else "failed"
