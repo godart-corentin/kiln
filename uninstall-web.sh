@@ -47,6 +47,7 @@ if [[ -n "$CADDY_WORKDIR" ]]; then
     (cd "$CADDY_WORKDIR" && docker compose up -d "$CADDY_SERVICE") || true
 fi
 
+docker image rm kiln-web:local >/dev/null 2>&1 || true
 docker network rm "$NETWORK" >/dev/null 2>&1 || true
 rm -f /etc/kiln/web.json
 

@@ -182,3 +182,42 @@ for fragment in required_fragments:
 print(
     "OK install-web: Caddy networks are preserved"
 )
+# React UI is built into a dedicated image. Runtime must not depend on Node
+# or bind the Python source from the host.
+compose_match = re.search(
+    r'''cat\s+>"\$TMP_COMPOSE"\s+<<EOF\n(?P<body>.*?)\nEOF''',
+    text,
+    flags=re.DOTALL | re.VERBOSE,
+)
+if compose_match is None:
+    fail("cannot find TMP_COMPOSE template")
+
+kiln_compose = compose_match.group("body")
+required_web_fragments = [
+    "build:",
+    "context: ${WEB_SOURCE}",
+    "dockerfile: Dockerfile",
+    "image: kiln-web:local",
+    'KILN_WEB_STATIC: "/opt/kiln/static"',
+    "source: /var/lib/kiln/builds",
+    "target: /var/lib/kiln/builds",
+    "read_only: true",
+]
+for fragment in required_web_fragments:
+    if fragment not in kiln_compose:
+        fail(f"missing React web runtime fragment: {fragment}")
+
+for forbidden in (
+    "/usr/local/libexec/kiln/web",
+    "/var/run/docker.sock",
+    "/etc/kiln/secrets",
+    "/srv/git",
+    "/var/lib/kiln/queue",
+):
+    if forbidden in kiln_compose:
+        fail(f"kiln-web compose exposes forbidden path: {forbidden}")
+
+if "up -d --build" not in text:
+    fail("install-web must build the React image before starting kiln-web")
+
+print("OK install-web: React image keeps kiln-web read-only and isolated")

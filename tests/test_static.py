@@ -24,7 +24,7 @@ PYTHON_FILES = [
     ROOT / "libexec" / "secret-set-file",
     ROOT / "libexec" / "secret-list",
     ROOT / "libexec" / "secret-delete",
-    ROOT / "web" / "web",
+    ROOT / "web" / "server" / "kiln_web.py",
 ]
 
 BASH_FILES = [

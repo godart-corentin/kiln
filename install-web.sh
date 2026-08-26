@@ -20,7 +20,7 @@ NETWORK="${KILN_PROXY_NETWORK:-kiln-proxy}"
 KILN_ROOT="/opt/kiln"
 KILN_COMPOSE="${KILN_ROOT}/docker-compose.yml"
 
-WEB_SCRIPT="/usr/local/libexec/kiln/web"
+WEB_SOURCE="/usr/local/share/kiln/web-src"
 WEB_CONFIG="/etc/kiln/web.json"
 
 AUTH_USER="${KILN_WEB_USER:-kiln}"
@@ -39,8 +39,8 @@ command -v python3 >/dev/null \
 docker compose version >/dev/null 2>&1 \
     || die "docker compose plugin unavailable"
 
-[[ -x "$WEB_SCRIPT" ]] \
-    || die "Kiln web program is not installed; run install.sh first"
+[[ -f "$WEB_SOURCE/Dockerfile" ]] \
+    || die "Kiln web source is not installed; run install.sh first"
 
 docker inspect "$CADDY_CONTAINER" >/dev/null 2>&1 \
     || die "running Caddy container '$CADDY_CONTAINER' not found"
@@ -232,7 +232,11 @@ EOF
 cat >"$TMP_COMPOSE" <<EOF
 services:
   kiln-web:
-    image: python:3.12-alpine
+    build:
+      context: ${WEB_SOURCE}
+      dockerfile: Dockerfile
+
+    image: kiln-web:local
     container_name: kiln-web
 
     restart: unless-stopped
@@ -243,20 +247,12 @@ services:
     group_add:
       - "${KILN_READERS_GID}"
 
-    command:
-      - python3
-      - /opt/kiln/web
-
     environment:
       KILN_WEB_HOST: "0.0.0.0"
       KILN_WEB_PORT: "8088"
+      KILN_WEB_STATIC: "/opt/kiln/static"
 
     volumes:
-      - type: bind
-        source: /usr/local/libexec/kiln/web
-        target: /opt/kiln/web
-        read_only: true
-
       - type: bind
         source: /var/lib/kiln/builds
         target: /var/lib/kiln/builds
@@ -600,7 +596,7 @@ chmod 0644 "$WEB_CONFIG"
 
 docker compose \
     -f "$KILN_COMPOSE" \
-    up -d
+    up -d --build
 
 
 #

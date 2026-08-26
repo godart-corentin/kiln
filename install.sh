@@ -122,7 +122,19 @@ setfacl -m u:git:rwx /var/lib/kiln/queue/incoming
 find /var/lib/kiln/builds -type d -exec chmod g-s {} +
 
 install -o root -g root -m 0755 "$ROOT_DIR/bin/kiln" /usr/local/bin/kiln
-install -o root -g root -m 0755 "$ROOT_DIR/web/web" /usr/local/libexec/kiln/web
+install -o root -g root -m 0755 "$ROOT_DIR/web/server/kiln_web.py" /usr/local/libexec/kiln/web
+
+install -d -o root -g root -m 0755 /usr/local/share/kiln
+rm -rf /usr/local/share/kiln/web-src
+cp -R "$ROOT_DIR/web" /usr/local/share/kiln/web-src
+rm -rf \
+    /usr/local/share/kiln/web-src/frontend/node_modules \
+    /usr/local/share/kiln/web-src/frontend/dist \
+    /usr/local/share/kiln/web-src/server/__pycache__
+chown -R root:root /usr/local/share/kiln/web-src
+find /usr/local/share/kiln/web-src -type d -exec chmod 0755 {} +
+find /usr/local/share/kiln/web-src -type f -exec chmod 0644 {} +
+chmod 0755 /usr/local/share/kiln/web-src/server/kiln_web.py
 
 for module in pipeline.py artifacts.py secrets.py; do
     install -o root -g root -m 0644 "$ROOT_DIR/libexec/$module" "/usr/local/libexec/kiln/$module"

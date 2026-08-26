@@ -19,7 +19,6 @@ def load_script(name, path):
 
 cli = load_script("kiln_cli_status_test", ROOT / "bin" / "kiln")
 notify = load_script("kiln_notify_status_test", ROOT / "libexec" / "notify-discord")
-web = load_script("kiln_web_status_test", ROOT / "web" / "web")
 
 
 def sample_status(state="running", job_state="running"):
@@ -83,26 +82,12 @@ def test_discord_groups_jobs_by_group():
     assert "tests" in text
 
 
-def test_current_web_renders_jobs_until_react_replaces_it():
-    with tempfile.TemporaryDirectory() as tmp:
-        build = Path(tmp)
-        (build / "logs").mkdir()
-        (build / "logs" / "tests.log").write_text("hello\n", encoding="utf-8")
-        status = sample_status()
-        html = web.render_build(build, status)
-        log_html = web.render_log(build, status, "tests")
-    assert "tests" in html
-    assert "quality" in html
-    assert log_html is not None
-    assert 'http-equiv="refresh"' in log_html
-
 
 def main():
     tests = [
         test_cli_status_lists_jobs_and_groups,
         test_cli_terminal_state_reads_pipeline_job,
         test_discord_groups_jobs_by_group,
-        test_current_web_renders_jobs_until_react_replaces_it,
     ]
     for test in tests:
         test()

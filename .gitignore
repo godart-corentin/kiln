@@ -16,6 +16,8 @@ __pycache__/
 *.local
 
 # Build / packaging output
+node_modules/
+*.tsbuildinfo
 dist/
 build/
 *.zip

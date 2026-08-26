@@ -20,6 +20,7 @@ systemctl daemon-reload
 
 rm -f /usr/local/bin/kiln
 rm -rf /usr/local/libexec/kiln
+rm -rf /usr/local/share/kiln/web-src
 rm -rf /var/lib/kiln/secret-staging
 
 cat <<'EOF'
