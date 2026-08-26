@@ -8,6 +8,7 @@ NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 ENV_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 TOOL_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
 SUPPORTED_TOOLS = {"pnpm"}
+SUPPORTED_CACHES = {"pnpm"}
 
 
 class PipelineError(ValueError):
@@ -143,6 +144,27 @@ def _validate_tools(value, *, job_name: str, package_manager: str | None):
     return result
 
 
+def _validate_cache(value, *, job_name: str, tools: dict[str, str]):
+    if value is None:
+        return {}
+    names = _validate_string_list(
+        value,
+        label=f"job {job_name!r}: invalid cache",
+        max_items=8,
+    )
+    result = {}
+    for name in names:
+        if name in result:
+            fail(f"job {job_name!r}: duplicate cache {name!r}")
+        if name not in SUPPORTED_CACHES:
+            fail(f"job {job_name!r}: unsupported cache {name!r}")
+        version = tools.get(name)
+        if version is None:
+            fail(f"job {job_name!r}: cache {name!r} requires managed tool {name!r}")
+        result[name] = version
+    return result
+
+
 def _validate_secrets(value, *, job_name: str):
     names = _validate_string_list(
         value if value is not None else [],
@@ -208,6 +230,7 @@ def _normalize_job(
     tools = _validate_tools(
         spec.get("tools"), job_name=name, package_manager=package_manager
     )
+    cache = _validate_cache(spec.get("cache"), job_name=name, tools=tools)
     overlap = sorted(set(env) & set(secrets))
     if overlap:
         fail(f"job {name!r}: environment and secret names overlap: {', '.join(overlap)}")
@@ -225,6 +248,7 @@ def _normalize_job(
         "secrets": secrets,
         "artifacts": artifacts,
         "tools": tools,
+        "cache": cache,
         mode: execution,
     }
     return normalized
