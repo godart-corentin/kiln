@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+import json
+import os
+import re
+import shutil
+import sys
+from pathlib import Path
+
+GIT_ROOT = Path("/srv/git")
+CONFIG_ROOT = Path("/etc/kiln/projects")
+SECRETS_ROOT = Path("/etc/kiln/secrets")
+QUEUE_DIRS = (
+    ("incoming", Path("/var/lib/kiln/queue/incoming")),
+    ("running", Path("/var/lib/kiln/queue/running")),
+)
+PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
+
+
+def fail(message: str) -> None:
+    print(f"kiln project delete: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def read_json(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        fail(f"file not found: {path}")
+    except json.JSONDecodeError as exc:
+        fail(f"invalid JSON {path}: {exc}")
+
+
+def active_jobs(project: str):
+    matches = []
+    for queue_name, queue_dir in QUEUE_DIRS:
+        for path in queue_dir.glob("*.json"):
+            try:
+                job = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if job.get("project") == project:
+                matches.append((queue_name, path.name))
+    return matches
+
+
+def main() -> int:
+    if os.geteuid() != 0:
+        fail("must run as root")
+    if len(sys.argv) != 2:
+        fail("usage: project-delete <project-name>")
+
+    project = sys.argv[1]
+    if not PROJECT_RE.fullmatch(project):
+        fail(f"invalid project name: {project!r}")
+
+    repo = GIT_ROOT / f"{project}.git"
+    config_path = CONFIG_ROOT / f"{project}.json"
+    secret_path = SECRETS_ROOT / f"{project}.discord-webhook"
+
+    if not config_path.is_file():
+        fail(f"project does not exist: {project}")
+
+    config = read_json(config_path)
+    if config.get("schema") != 1 or config.get("project") != project:
+        fail("project configuration mismatch")
+    if config.get("repository") != str(repo):
+        fail("refusing deletion: unexpected repository path")
+    configured_secret = config.get("discord", {}).get("webhook_file")
+    if configured_secret is not None and configured_secret != str(secret_path):
+        fail("refusing deletion: unexpected Discord secret path")
+
+    jobs = active_jobs(project)
+    if jobs:
+        print("kiln project delete: project still has active jobs:", file=sys.stderr)
+        for queue_name, filename in jobs:
+            print(f"  {queue_name}: {filename}", file=sys.stderr)
+        return 1
+
+    if repo.is_symlink():
+        fail(f"repository path is unexpectedly a symlink: {repo}")
+    if repo.exists():
+        if not repo.is_dir():
+            fail(f"repository path is not a directory: {repo}")
+        required = (repo / "HEAD", repo / "objects", repo / "refs")
+        if not all(path.exists() for path in required):
+            fail(f"refusing deletion: {repo} does not look like a bare Git repository")
+        shutil.rmtree(repo)
+
+    config_path.unlink(missing_ok=True)
+    secret_path.unlink(missing_ok=True)
+
+    print(f"Deleted Kiln project: {project}")
+    print("Build history was preserved.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

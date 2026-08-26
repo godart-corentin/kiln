@@ -1,0 +1,590 @@
+#!/usr/bin/env python3
+import fcntl
+import json
+import os
+import pwd
+import re
+import shlex
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
+
+CONFIG_ROOT = Path("/etc/kiln/projects")
+INCOMING = Path("/var/lib/kiln/queue/incoming")
+RUNNING = Path("/var/lib/kiln/queue/running")
+BUILDS = Path("/var/lib/kiln/builds")
+LOCK_FILE = Path("/var/lib/kiln/locks/controller.lock")
+
+PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
+STEP_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+BUILD_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+
+
+class KilnError(Exception):
+    pass
+
+
+def fail(message):
+    raise KilnError(message)
+
+
+def now():
+    return datetime.now(timezone.utc)
+
+
+def iso(value=None):
+    return (value or now()).isoformat().replace("+00:00", "Z")
+
+
+def elapsed(started_at):
+    start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+    return round((now() - start).total_seconds(), 3)
+
+
+def read_json(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        fail(f"file not found: {path}")
+    except json.JSONDecodeError as exc:
+        fail(f"invalid JSON {path}: {exc}")
+
+
+def write_json(path, data):
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with tmp.open("x", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        dfd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def git(repo, *args):
+    return subprocess.run(
+        ["/usr/bin/git", f"--git-dir={repo}", *args],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+
+def validate_job(job, filename):
+    required = {
+        "schema", "id", "project", "received_at", "old_sha", "new_sha",
+        "sha", "ref", "type", "pin_ref",
+    }
+    missing = required - job.keys()
+    if missing:
+        fail("job missing: " + ", ".join(sorted(missing)))
+    if job["schema"] != 1:
+        fail("unsupported job schema")
+    if not BUILD_RE.fullmatch(str(job["id"])):
+        fail("invalid job id")
+    if filename != f"{job['id']}.json":
+        fail("job id/filename mismatch")
+    if not PROJECT_RE.fullmatch(str(job["project"])):
+        fail("invalid project")
+    if job["type"] not in ("ci", "release"):
+        fail("invalid job type")
+    if not OID_RE.fullmatch(str(job["sha"])):
+        fail("invalid job sha")
+    if job["pin_ref"] != "refs/kiln/jobs/" + job["id"]:
+        fail("invalid pin ref")
+
+
+def load_config(project):
+    path = CONFIG_ROOT / f"{project}.json"
+    cfg = read_json(path)
+    expected_repo = Path("/srv/git") / f"{project}.git"
+    if cfg.get("schema") != 1 or cfg.get("project") != project:
+        fail(f"invalid project config: {path}")
+    if Path(cfg.get("repository", "")) != expected_repo:
+        fail(f"repository must be {expected_repo}")
+    if not expected_repo.is_dir():
+        fail(f"repository missing: {expected_repo}")
+
+    pipeline = cfg.get("pipeline", ".kiln/pipeline.json")
+    if not isinstance(pipeline, str):
+        fail("invalid pipeline path")
+    pp = PurePosixPath(pipeline)
+    if pp.is_absolute() or ".." in pp.parts:
+        fail("unsafe pipeline path")
+
+    runner = cfg.get("runner")
+    if not isinstance(runner, dict):
+        fail("runner config missing")
+    if not isinstance(runner.get("max_parallel"), int) or not 1 <= runner["max_parallel"] <= 32:
+        fail("runner.max_parallel invalid")
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", str(runner.get("cpus", ""))):
+        fail("runner.cpus invalid")
+    if not re.fullmatch(r"[0-9]+[kKmMgG]", str(runner.get("memory", ""))):
+        fail("runner.memory invalid")
+    if not isinstance(runner.get("pids_limit"), int) or not 16 <= runner["pids_limit"] <= 65535:
+        fail("runner.pids_limit invalid")
+    if not isinstance(runner.get("timeout_seconds"), int) or not 1 <= runner["timeout_seconds"] <= 86400:
+        fail("runner.timeout_seconds invalid")
+    networks = runner.get("allowed_networks")
+    if (
+        not isinstance(networks, list)
+        or not networks
+        or any(network not in ("none", "kiln-ci") for network in networks)
+    ):
+        fail("runner.allowed_networks invalid")
+    return cfg
+
+
+def extract_snapshot(job, cfg, build_dir):
+    repo = Path(cfg["repository"])
+    archive = build_dir / ".source.tar"
+    src = build_dir / "src"
+    log_path = build_dir / "logs" / "prepare.log"
+
+    with log_path.open("a", encoding="utf-8") as log:
+        log.write(f"project: {job['project']}\nsha: {job['sha']}\n")
+        log.write("Creating Git archive...\n")
+        log.flush()
+        try:
+            result = subprocess.run(
+                [
+                    "/usr/bin/git", f"--git-dir={repo}", "archive", "--format=tar",
+                    f"--output={archive}", job["sha"],
+                ],
+                stdout=log, stderr=log, check=False,
+            )
+            if result.returncode:
+                fail(f"git archive failed ({result.returncode})")
+            log.write("Extracting archive...\n")
+            log.flush()
+            result = subprocess.run(
+                [
+                    "/usr/bin/tar", "-xf", str(archive), "-C", str(src),
+                    "--no-same-owner", "--no-same-permissions",
+                ],
+                stdout=log, stderr=log, check=False,
+            )
+            if result.returncode:
+                fail(f"tar extraction failed ({result.returncode})")
+            log.write("Snapshot prepared successfully.\n")
+        finally:
+            archive.unlink(missing_ok=True)
+
+
+def load_pipeline(job, cfg):
+    repo = Path(cfg["repository"])
+    path = cfg.get("pipeline", ".kiln/pipeline.json")
+    result = git(repo, "show", f"{job['sha']}:{path}")
+    if result.returncode:
+        fail(f"cannot read {path}: {result.stderr.strip()}")
+    if len(result.stdout.encode()) > 256 * 1024:
+        fail("pipeline too large")
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        fail(f"invalid pipeline JSON: {exc}")
+
+
+def check_cycle(steps):
+    marks = {}
+    def visit(step_id):
+        if marks.get(step_id) == 1:
+            fail(f"dependency cycle involving {step_id}")
+        if marks.get(step_id) == 2:
+            return
+        marks[step_id] = 1
+        for dep in steps[step_id]["needs"]:
+            visit(dep)
+        marks[step_id] = 2
+    for step_id in steps:
+        visit(step_id)
+
+
+def resolve_pipeline(job, cfg, pipeline):
+    if not isinstance(pipeline, dict) or pipeline.get("schema") != 1:
+        fail("pipeline.schema must be 1")
+    raw = pipeline.get("steps")
+    if not isinstance(raw, dict) or not raw:
+        fail("pipeline.steps must be non-empty")
+
+    runner = cfg["runner"]
+    requested = pipeline.get("max_parallel", runner["max_parallel"])
+    if not isinstance(requested, int) or requested < 1:
+        fail("pipeline.max_parallel invalid")
+
+    steps = {}
+    for step_id, spec in raw.items():
+        if not isinstance(step_id, str) or not STEP_RE.fullmatch(step_id):
+            fail(f"invalid step id: {step_id!r}")
+        if not isinstance(spec, dict):
+            fail(f"{step_id}: step must be object")
+
+        when = spec.get("when", "always")
+        if when not in ("always", "ci", "release"):
+            fail(f"{step_id}: invalid when")
+        if when not in ("always", job["type"]):
+            continue
+
+        stage = spec.get("stage")
+        image = spec.get("image")
+        command = spec.get("command")
+        needs = spec.get("needs", [])
+        network = spec.get("network", "none")
+
+        if not isinstance(stage, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,31}", stage):
+            fail(f"{step_id}: invalid stage")
+        if not isinstance(image, str) or not image or len(image) > 255 or any(ord(c) < 32 for c in image):
+            fail(f"{step_id}: invalid image")
+        if not isinstance(command, list) or not command or len(command) > 64:
+            fail(f"{step_id}: invalid command")
+        if any(not isinstance(arg, str) or "\x00" in arg for arg in command):
+            fail(f"{step_id}: invalid command argument")
+        if not isinstance(needs, list) or len(set(needs)) != len(needs):
+            fail(f"{step_id}: invalid needs")
+        if any(not isinstance(dep, str) or not STEP_RE.fullmatch(dep) for dep in needs):
+            fail(f"{step_id}: invalid dependency")
+        if network not in runner["allowed_networks"]:
+            fail(f"{step_id}: network {network!r} not allowed")
+
+        steps[step_id] = {
+            "stage": stage,
+            "image": image,
+            "command": command,
+            "needs": needs,
+            "network": network,
+            "when": when,
+        }
+
+    if not steps:
+        fail(f"no steps active for {job['type']}")
+
+    for step_id, spec in steps.items():
+        for dep in spec["needs"]:
+            if dep not in steps:
+                fail(f"{step_id}: inactive/missing dependency {dep}")
+            if dep == step_id:
+                fail(f"{step_id}: self dependency")
+    check_cycle(steps)
+
+    return {
+        "schema": 1,
+        "build_id": job["id"],
+        "project": job["project"],
+        "sha": job["sha"],
+        "ref": job["ref"],
+        "job_type": job["type"],
+        "max_parallel": min(requested, runner["max_parallel"]),
+        "runner": {
+            "cpus": runner["cpus"],
+            "memory": runner["memory"],
+            "pids_limit": runner["pids_limit"],
+            "timeout_seconds": runner["timeout_seconds"],
+        },
+        "steps": steps,
+    }
+
+
+def write_makefile(build_dir, runtime):
+    step_ids = list(runtime["steps"])
+    lines = [
+        ".DELETE_ON_ERROR:",
+        ".PHONY: all " + " ".join(f"step-{step}" for step in step_ids),
+        "",
+        "all: " + " ".join(f"step-{step}" for step in step_ids),
+        "",
+    ]
+    build = shlex.quote(runtime["build_id"])
+    for step_id, spec in runtime["steps"].items():
+        deps = " ".join(f"step-{dep}" for dep in spec["needs"])
+        lines.append((f"step-{step_id}: {deps}").rstrip())
+        lines.append(
+            "\t@/usr/local/libexec/kiln/execute "
+            f"{build} {shlex.quote(step_id)}"
+        )
+        lines.append("")
+    (build_dir / "pipeline.mk").write_text("\n".join(lines), encoding="utf-8")
+
+
+def initial_status(job):
+    return {
+        "schema": 1,
+        "build_id": job["id"],
+        "job_id": job["id"],
+        "project": job["project"],
+        "sha": job["sha"],
+        "ref": job["ref"],
+        "type": job["type"],
+        "state": "preparing",
+        "received_at": job["received_at"],
+        "started_at": iso(),
+        "finished_at": None,
+        "duration_seconds": None,
+        "steps": {},
+    }
+
+
+def start_pipeline_status(build_dir, status, runtime):
+    status["steps"]["prepare"] = {
+        "stage": "internal",
+        "state": "success",
+        "exit_code": 0,
+        "log": "logs/prepare.log",
+    }
+    for step_id, spec in runtime["steps"].items():
+        status["steps"][step_id] = {
+            "stage": spec["stage"],
+            "state": "pending",
+            "exit_code": None,
+            "started_at": None,
+            "finished_at": None,
+            "duration_seconds": None,
+            "log": f"logs/{step_id}.log",
+        }
+    status["state"] = "running"
+    write_json(build_dir / "status.json", status)
+
+
+def fail_status(build_dir, message):
+    path = build_dir / "status.json"
+    status = read_json(path)
+    status["state"] = "failed"
+    status["finished_at"] = iso()
+    status["duration_seconds"] = elapsed(status["started_at"])
+    if status.get("steps", {}).get("prepare") is None:
+        status["steps"]["prepare"] = {
+            "stage": "internal",
+            "state": "failed",
+            "exit_code": None,
+            "error": message,
+            "log": "logs/prepare.log",
+        }
+    else:
+        status["error"] = message
+
+    for step in status.get("steps", {}).values():
+        if step.get("state") == "running":
+            step["state"] = "failed"
+            step["error"] = message
+        elif step.get("state") == "pending":
+            step["state"] = "skipped"
+            step["reason"] = "controller_error"
+    write_json(path, status)
+
+
+def finalize(build_dir, make_rc):
+    path = build_dir / "status.json"
+    status = read_json(path)
+    failed = make_rc != 0
+    for step_id, step in status["steps"].items():
+        if step_id == "prepare":
+            continue
+        if step["state"] == "pending":
+            step["state"] = "skipped"
+            step["reason"] = "dependency_failed"
+        elif step["state"] not in ("success", "skipped"):
+            failed = True
+    status["state"] = "failed" if failed else "success"
+    status["finished_at"] = iso()
+    status["duration_seconds"] = elapsed(status["started_at"])
+    write_json(path, status)
+    return status["state"]
+
+
+def claim():
+    for source in sorted(INCOMING.glob("*.json")):
+        destination = RUNNING / source.name
+        try:
+            os.replace(source, destination)
+            return destination
+        except FileNotFoundError:
+            pass
+    return None
+
+
+def cleanup_pin(job, cfg):
+    expected = "refs/kiln/jobs/" + job["id"]
+    if job.get("pin_ref") != expected:
+        print(f"kiln: warning: refusing unsafe pin path: {job.get('pin_ref')!r}", file=sys.stderr)
+        return
+    pin_path = Path(cfg["repository"]) / "refs" / "kiln" / "jobs" / job["id"]
+    try:
+        pin_path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        print(f"kiln: warning: cannot delete {job['pin_ref']}: {exc}", file=sys.stderr)
+
+
+def cleanup_containers(build_id):
+    result = subprocess.run(
+        ["/usr/bin/docker", "ps", "-aq", "--filter", f"label=kiln.build_id={build_id}"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    ids = result.stdout.split()
+    if ids:
+        subprocess.run(
+            ["/usr/bin/docker", "rm", "-f", *ids],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+
+
+def recover_stale():
+    for job_path in sorted(RUNNING.glob("*.json")):
+        try:
+            job = read_json(job_path)
+            validate_job(job, job_path.name)
+            cfg = load_config(job["project"])
+        except Exception as exc:
+            print(f"kiln: dropping invalid stale job {job_path.name}: {exc}", file=sys.stderr)
+            job_path.unlink(missing_ok=True)
+            continue
+
+        build_dir = BUILDS / job["id"]
+        if not build_dir.exists():
+            os.replace(job_path, INCOMING / job_path.name)
+            continue
+
+        cleanup_containers(job["id"])
+        status_path = build_dir / "status.json"
+        if status_path.exists():
+            status = read_json(status_path)
+            if status.get("state") not in ("success", "failed", "aborted"):
+                status["state"] = "aborted"
+                status["finished_at"] = iso()
+                if status.get("started_at"):
+                    status["duration_seconds"] = elapsed(status["started_at"])
+                for step in status.get("steps", {}).values():
+                    if step.get("state") == "running":
+                        step["state"] = "failed"
+                        step["error"] = "controller interrupted"
+                    elif step.get("state") == "pending":
+                        step["state"] = "skipped"
+                        step["reason"] = "controller_interrupted"
+                write_json(status_path, status)
+
+        cleanup_pin(job, cfg)
+        job_path.unlink(missing_ok=True)
+
+
+def notify(build_id, build_dir):
+    log_path = build_dir / "logs" / "notify.log"
+    with log_path.open("a", encoding="utf-8") as log:
+        result = subprocess.run(
+            ["/usr/local/libexec/kiln/notify-discord", build_id],
+            stdout=log,
+            stderr=log,
+            check=False,
+        )
+    if result.returncode:
+        print(f"kiln: warning: Discord notification failed for {build_id}", file=sys.stderr)
+
+
+def process(job_path):
+    job = read_json(job_path)
+    validate_job(job, job_path.name)
+    cfg = load_config(job["project"])
+    build_dir = BUILDS / job["id"]
+    if build_dir.exists():
+        fail(f"build already exists: {build_dir}")
+
+    build_dir.mkdir(mode=0o750)
+    for name in ("src", "work", "logs", "artifacts"):
+        (build_dir / name).mkdir(mode=0o750)
+
+    write_json(build_dir / "job.json", job)
+    write_json(build_dir / "status.json", initial_status(job))
+
+    try:
+        extract_snapshot(job, cfg, build_dir)
+        pipeline = load_pipeline(job, cfg)
+        runtime = resolve_pipeline(job, cfg, pipeline)
+        write_json(build_dir / "runtime.json", runtime)
+        write_makefile(build_dir, runtime)
+
+        status = read_json(build_dir / "status.json")
+        start_pipeline_status(build_dir, status, runtime)
+
+        pipeline_log = build_dir / "logs" / "pipeline.log"
+        with pipeline_log.open("w", encoding="utf-8") as log:
+            make_rc = subprocess.run(
+                [
+                    "/usr/bin/make",
+                    "-f", str(build_dir / "pipeline.mk"),
+                    f"-j{runtime['max_parallel']}",
+                    "-k",
+                    "--output-sync=target",
+                    "all",
+                ],
+                cwd=build_dir,
+                stdout=log,
+                stderr=log,
+                check=False,
+            ).returncode
+
+        state = finalize(build_dir, make_rc)
+        print(f"kiln: {job['id']} -> {state}")
+
+    except Exception as exc:
+        try:
+            with (build_dir / "logs" / "prepare.log").open("a", encoding="utf-8") as log:
+                log.write(f"\nKILN ERROR: {exc}\n")
+            fail_status(build_dir, str(exc))
+        except Exception as persist_exc:
+            print(f"kiln: cannot persist failure: {persist_exc}", file=sys.stderr)
+        print(f"kiln: {job['id']} failed: {exc}", file=sys.stderr)
+    finally:
+        cleanup_pin(job, cfg)
+        job_path.unlink(missing_ok=True)
+        notify(job["id"], build_dir)
+
+
+def main():
+    user = pwd.getpwuid(os.geteuid()).pw_name
+    if user != "kiln":
+        fail(f"controller must run as kiln, not {user}")
+
+    fd = os.open(LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o640)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return 0
+
+        recover_stale()
+        while True:
+            job_path = claim()
+            if job_path is None:
+                break
+            try:
+                process(job_path)
+            except Exception as exc:
+                print(f"kiln: controller error: {exc}", file=sys.stderr)
+        return 0
+    finally:
+        os.close(fd)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KilnError as exc:
+        print(f"kiln controller: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"kiln controller: unexpected error: {exc}", file=sys.stderr)
+        sys.exit(1)

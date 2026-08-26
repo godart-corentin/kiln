@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Local environment
+.env
+.env.*
+!.env.example
+*.local
+
+# Build / packaging output
+dist/
+build/
+*.zip
+*.tar.gz
+*.log
+
+# Secrets / credentials
+secrets/
+private/
+*.discord-webhook
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+authorized_keys
+
+# Local runtime/config copies
+runtime/
+web.json
+docker-compose.override.yml

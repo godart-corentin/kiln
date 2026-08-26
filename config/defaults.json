@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "runner": {
+    "max_parallel": 3,
+    "cpus": "0.75",
+    "memory": "768m",
+    "pids_limit": 256,
+    "timeout_seconds": 1800,
+    "allowed_networks": [
+      "none",
+      "kiln-ci"
+    ]
+  }
+}

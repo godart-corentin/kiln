@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+CONFIG="/etc/kiln/network.env"
+
+die() {
+    echo "kiln network: $*" >&2
+    exit 1
+}
+
+[[ "${EUID}" -eq 0 ]] || die "must run as root"
+[[ -f "$CONFIG" ]] || die "missing $CONFIG"
+
+# shellcheck disable=SC1090
+source "$CONFIG"
+
+: "${NETWORK:?}"
+: "${BRIDGE:?}"
+: "${SUBNET:?}"
+: "${GATEWAY:?}"
+
+command -v docker >/dev/null || die "docker not found"
+command -v iptables >/dev/null || die "iptables not found"
+
+iptables -S DOCKER-USER >/dev/null 2>&1     || die "Docker DOCKER-USER chain is unavailable; Kiln currently requires Docker's iptables firewall backend"
+
+if ! docker network inspect "$NETWORK" >/dev/null 2>&1; then
+    docker network create \
+        --driver bridge \
+        --subnet "$SUBNET" \
+        --gateway "$GATEWAY" \
+        --opt com.docker.network.bridge.name="$BRIDGE" \
+        --opt com.docker.network.bridge.enable_ip_masquerade=true \
+        --opt com.docker.network.bridge.enable_icc=false \
+        "$NETWORK" >/dev/null
+fi
+
+actual_subnet="$(
+    docker network inspect "$NETWORK" \
+        --format '{{(index .IPAM.Config 0).Subnet}}'
+)"
+actual_bridge="$(
+    docker network inspect "$NETWORK" \
+        --format '{{index .Options "com.docker.network.bridge.name"}}'
+)"
+
+[[ "$actual_subnet" == "$SUBNET" ]] \
+    || die "unexpected subnet for $NETWORK: $actual_subnet"
+[[ "$actual_bridge" == "$BRIDGE" ]] \
+    || die "unexpected bridge for $NETWORK: $actual_bridge"
+
+iptables -N KILN-CI-EGRESS 2>/dev/null || true
+iptables -F KILN-CI-EGRESS
+
+for destination in \
+    0.0.0.0/8 \
+    10.0.0.0/8 \
+    100.64.0.0/10 \
+    127.0.0.0/8 \
+    169.254.0.0/16 \
+    172.16.0.0/12 \
+    192.168.0.0/16 \
+    198.18.0.0/15 \
+    224.0.0.0/4 \
+    240.0.0.0/4
+do
+    iptables \
+        -A KILN-CI-EGRESS \
+        -d "$destination" \
+        -j REJECT \
+        --reject-with icmp-net-unreachable
+done
+
+iptables -A KILN-CI-EGRESS -j RETURN
+
+iptables \
+    -C DOCKER-USER \
+    -i "$BRIDGE" \
+    -j KILN-CI-EGRESS \
+    2>/dev/null \
+|| iptables \
+    -I DOCKER-USER 1 \
+    -i "$BRIDGE" \
+    -j KILN-CI-EGRESS
+
+iptables -N KILN-CI-HOST 2>/dev/null || true
+iptables -F KILN-CI-HOST
+iptables \
+    -A KILN-CI-HOST \
+    -j REJECT \
+    --reject-with icmp-port-unreachable
+
+iptables \
+    -C INPUT \
+    -i "$BRIDGE" \
+    -s "$SUBNET" \
+    -j KILN-CI-HOST \
+    2>/dev/null \
+|| iptables \
+    -I INPUT 1 \
+    -i "$BRIDGE" \
+    -s "$SUBNET" \
+    -j KILN-CI-HOST
+
+echo "kiln network: ready ($NETWORK $SUBNET)"

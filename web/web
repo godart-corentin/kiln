@@ -1,0 +1,346 @@
+#!/usr/bin/env python3
+import html
+import json
+import os
+import re
+import stat
+import sys
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import quote, unquote, urlsplit
+
+BUILDS = Path("/var/lib/kiln/builds")
+HOST = os.environ.get("KILN_WEB_HOST", "127.0.0.1")
+PORT = int(os.environ.get("KILN_WEB_PORT", "8088"))
+
+BUILD_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+LOG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+FINAL_STATES = {"success", "failed", "aborted"}
+ANSI_RE = re.compile(r"\x1B(?:\[[0-?]*[ -/]*[@-~]|\].*?(?:\x07|\x1B\\))", re.DOTALL)
+CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+MAX_LOG_BYTES = 2 * 1024 * 1024
+MAX_BUILDS = 100
+MAX_ARTIFACTS = 200
+
+
+def esc(value):
+    return html.escape(str(value), quote=True)
+
+
+def read_json(path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def sanitize_log(text):
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return CONTROL_RE.sub("", ANSI_RE.sub("", text))
+
+
+def read_log_tail(path):
+    with path.open("rb") as f:
+        f.seek(0, os.SEEK_END)
+        size = f.tell()
+        start = max(0, size - MAX_LOG_BYTES)
+        f.seek(start)
+        data = f.read()
+    truncated = start > 0
+    if truncated:
+        parts = data.split(b"\n", 1)
+        if len(parts) == 2:
+            data = parts[1]
+    return sanitize_log(data.decode("utf-8", errors="replace")), truncated
+
+
+def short_ref(ref):
+    for prefix in ("refs/heads/", "refs/tags/"):
+        if ref.startswith(prefix):
+            return ref[len(prefix):]
+    return ref
+
+
+def duration(value):
+    if not isinstance(value, (int, float)):
+        return "—"
+    seconds = int(round(value))
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {seconds:02d}s"
+    if minutes:
+        return f"{minutes}m {seconds:02d}s"
+    return f"{seconds}s"
+
+
+def format_time(value):
+    if not value:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+    except Exception:
+        return value
+
+
+def state_label(state):
+    labels = {
+        "success": ("✓", "Success", "success"),
+        "failed": ("×", "Failed", "failed"),
+        "aborted": ("!", "Aborted", "aborted"),
+        "running": ("●", "Running", "running"),
+        "preparing": ("●", "Preparing", "running"),
+        "queued": ("•", "Queued", "pending"),
+        "pending": ("•", "Pending", "pending"),
+        "skipped": ("»", "Skipped", "skipped"),
+    }
+    return labels.get(state, ("?", state, "pending"))
+
+
+def build_dirs():
+    try:
+        dirs = [path for path in BUILDS.iterdir() if path.is_dir()]
+    except FileNotFoundError:
+        return []
+    return sorted(dirs, key=lambda path: path.name, reverse=True)[:MAX_BUILDS]
+
+
+def load_builds():
+    result = []
+    for build_dir in build_dirs():
+        try:
+            status = read_json(build_dir / "status.json")
+            result.append((build_dir, status))
+        except Exception:
+            continue
+    return result
+
+
+def get_build(build_id):
+    if not BUILD_RE.fullmatch(build_id):
+        return None
+    path = BUILDS / build_id
+    if not path.is_dir():
+        return None
+    try:
+        status = read_json(path / "status.json")
+    except Exception:
+        return None
+    if status.get("build_id") != build_id:
+        return None
+    return path, status
+
+
+def artifact_list(build_dir):
+    root = build_dir / "artifacts"
+    if not root.is_dir():
+        return []
+    items = []
+    try:
+        for path in sorted(root.rglob("*")):
+            if len(items) >= MAX_ARTIFACTS:
+                break
+            try:
+                info = path.lstat()
+            except OSError:
+                continue
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                continue
+            try:
+                relative = path.relative_to(root)
+            except ValueError:
+                continue
+            items.append((str(relative), info.st_size))
+    except OSError:
+        pass
+    return items
+
+
+CSS = """
+:root{color-scheme:dark;--bg:#0d0f12;--panel:#15181d;--panel2:#1a1e24;--border:#2a3038;--text:#eef1f5;--muted:#929ba8;--good:#55d187;--bad:#ff6767;--run:#69a7ff;--skip:#a1a7b0;--accent:#f59e42}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}.shell{max-width:1120px;margin:0 auto;padding:32px 22px 70px}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:32px}.brand{font-size:24px;font-weight:760;letter-spacing:-.03em}.brand span{color:var(--accent)}
+.muted{color:var(--muted)}.panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.build-row{display:grid;grid-template-columns:minmax(180px,1.8fr) minmax(110px,.8fr) minmax(90px,.7fr) 100px;gap:18px;align-items:center;padding:17px 19px;border-top:1px solid var(--border)}
+.build-row:first-child{border-top:0}.build-row:hover{background:var(--panel2);text-decoration:none}.project{font-weight:680;font-size:16px}.sha{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.badge{display:inline-flex;align-items:center;gap:7px;width:fit-content;border-radius:999px;padding:4px 9px;font-size:13px;font-weight:650}
+.badge.success{color:var(--good)}.badge.failed,.badge.aborted{color:var(--bad)}.badge.running{color:var(--run)}.badge.pending,.badge.skipped{color:var(--skip)}
+.hero{display:flex;flex-wrap:wrap;justify-content:space-between;gap:24px;align-items:flex-start;margin-bottom:28px}h1{font-size:30px;line-height:1.2;margin:0 0 9px;letter-spacing:-.035em}h2{font-size:18px;margin:34px 0 13px}
+.meta{display:flex;gap:10px 18px;flex-wrap:wrap;color:var(--muted)}.steps{display:grid}.step{display:grid;grid-template-columns:140px minmax(130px,1fr) 100px 90px;gap:16px;align-items:center;padding:14px 17px;border-top:1px solid var(--border)}
+.step:first-child{border-top:0}.step-name{font-weight:650}.log-link{color:#8dbaff}.artifact{display:flex;justify-content:space-between;gap:20px;padding:11px 15px;border-top:1px solid var(--border);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+.artifact:first-child{border-top:0}pre{margin:0;padding:20px;overflow-x:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.back{color:var(--muted);margin-bottom:20px;display:inline-block}.empty{padding:40px 20px;text-align:center;color:var(--muted)}.notice{padding:10px 14px;margin-bottom:13px;border:1px solid var(--border);background:var(--panel2);border-radius:9px;color:var(--muted)}
+@media(max-width:720px){.build-row{grid-template-columns:1fr auto}.build-row .branch,.build-row .duration{display:none}.step{grid-template-columns:1fr auto}.step .stage,.step .duration{display:none}}
+"""
+
+
+def layout(title, body, refresh=None):
+    refresh_html = f'<meta http-equiv="refresh" content="{int(refresh)}">' if refresh else ""
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{refresh_html}
+<title>{esc(title)} · Kiln</title><style>{CSS}</style></head>
+<body><main class="shell"><div class="topbar"><a class="brand" href="/"><span>◆</span> Kiln</a><span class="muted">CI</span></div>{body}</main></body></html>"""
+
+
+def render_home():
+    rows = []
+    for build_dir, status in load_builds():
+        state = status.get("state", "unknown")
+        symbol, label, klass = state_label(state)
+        build_id = status.get("build_id", build_dir.name)
+        rows.append(f"""
+<a class="build-row" href="/build/{quote(build_id, safe='')}">
+<div><div class="project">{esc(status.get('project','?'))}</div><div class="muted">{esc(short_ref(status.get('ref','?')))} · <span class="sha">{esc(str(status.get('sha',''))[:7])}</span></div></div>
+<div class="branch muted">{esc(status.get('type','?'))}</div><div><span class="badge {klass}">{symbol} {esc(label)}</span></div><div class="duration muted">{esc(duration(status.get('duration_seconds')))}</div>
+</a>""")
+    body = '<div class="hero"><div><h1>Builds</h1><div class="muted">Latest Kiln activity</div></div></div>'
+    body += '<section class="panel">' + "".join(rows) + "</section>" if rows else '<section class="panel empty">No builds yet.</section>'
+    return layout("Builds", body, refresh=10)
+
+
+def render_build(build_dir, status):
+    build_id = status["build_id"]
+    state = status.get("state", "unknown")
+    symbol, label, klass = state_label(state)
+    steps_html = []
+    for step_id, step in status.get("steps", {}).items():
+        ssymbol, slabel, sklass = state_label(step.get("state", "unknown"))
+        log_html = "—"
+        log_name = step.get("log")
+        if isinstance(log_name, str) and (build_dir / log_name).is_file():
+            log_html = f'<a class="log-link" href="/build/{quote(build_id,safe="")}/logs/{quote(step_id,safe="")}">view log</a>'
+        steps_html.append(f"""<div class="step"><div class="stage muted">{esc(step.get('stage','—'))}</div><div class="step-name">{esc(step_id)}</div><div><span class="badge {sklass}">{ssymbol} {esc(slabel)}</span></div><div class="duration">{log_html}</div></div>""")
+
+    pipeline_log = build_dir / "logs" / "pipeline.log"
+    extra_logs = f'<p><a class="log-link" href="/build/{quote(build_id,safe="")}/logs/pipeline">View pipeline log</a></p>' if pipeline_log.is_file() else ""
+
+    artifact_html = [
+        f'<div class="artifact"><span>{esc(name)}</span><span class="muted">{size:,} bytes</span></div>'
+        for name, size in artifact_list(build_dir)
+    ]
+    body = f"""
+<a class="back" href="/">← All builds</a>
+<div class="hero"><div><h1>{esc(status.get('project','?'))}</h1><div class="meta"><span>{esc(short_ref(status.get('ref','?')))}</span><span class="sha">{esc(status.get('sha',''))}</span><span>{esc(status.get('type','?'))}</span></div></div><span class="badge {klass}">{symbol} {esc(label)}</span></div>
+<div class="meta"><span>Duration: {esc(duration(status.get('duration_seconds')))}</span><span>Started: {esc(format_time(status.get('started_at')))}</span></div>
+<h2>Steps</h2><section class="panel">{''.join(steps_html) if steps_html else '<div class="empty">No steps.</div>'}</section>{extra_logs}
+<h2>Artifacts</h2><section class="panel">{''.join(artifact_html) if artifact_html else '<div class="empty">No artifacts.</div>'}</section>
+"""
+    return layout(
+        f"{status.get('project','?')} · {str(status.get('sha',''))[:7]}",
+        body,
+        refresh=3 if state not in FINAL_STATES else None,
+    )
+
+
+def render_log(build_dir, status, log_name):
+    if not LOG_RE.fullmatch(log_name):
+        return None
+    path = build_dir / "logs" / f"{log_name}.log"
+    if not path.is_file():
+        return None
+    try:
+        text, truncated = read_log_tail(path)
+    except OSError:
+        return None
+    notice = '<div class="notice">Showing the last 2 MiB. Use the Kiln CLI for the complete log.</div>' if truncated else ""
+    step = status.get("steps", {}).get(log_name)
+    if step is not None:
+        active = step.get("state") not in {"success", "failed", "skipped", "aborted"}
+    elif log_name == "pipeline":
+        active = status.get("state") not in FINAL_STATES
+    else:
+        active = False
+    body = f"""<a class="back" href="/build/{quote(status['build_id'],safe='')}">← Build</a><div class="hero"><div><h1>{esc(log_name)}</h1><div class="muted">{esc(status.get('project','?'))} · {esc(str(status.get('sha',''))[:7])}</div></div></div>{notice}<section class="panel"><pre>{esc(text)}</pre></section>"""
+    return layout(f"{log_name} · {str(status.get('sha',''))[:7]}", body, refresh=2 if active else None)
+
+
+class KilnHandler(BaseHTTPRequestHandler):
+    server_version = "KilnWeb/1"
+
+    def log_message(self, fmt, *args):
+        sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+
+    def send_page(self, code, content):
+        data = content.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        )
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
+
+    def error_page(self, code, message):
+        self.send_page(code, layout(str(code), f'<section class="panel empty">{esc(message)}</section>'))
+
+    def do_HEAD(self):
+        self.do_GET()
+
+    def do_GET(self):
+        path = unquote(urlsplit(self.path).path)
+        if path == "/healthz":
+            data = b"ok\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(data)
+            return
+
+        if path == "/":
+            self.send_page(200, render_home())
+            return
+
+        parts = [part for part in path.split("/") if part]
+        if len(parts) >= 2 and parts[0] == "build":
+            result = get_build(parts[1])
+            if result is None:
+                self.error_page(404, "Build not found.")
+                return
+            build_dir, status = result
+            if len(parts) == 2:
+                self.send_page(200, render_build(build_dir, status))
+                return
+            if len(parts) == 4 and parts[2] == "logs":
+                page = render_log(build_dir, status, parts[3])
+                if page is None:
+                    self.error_page(404, "Log not found.")
+                    return
+                self.send_page(200, page)
+                return
+        self.error_page(404, "Not found.")
+
+    def do_POST(self):
+        self.error_page(405, "Kiln Web is read-only.")
+
+    do_PUT = do_POST
+    do_PATCH = do_POST
+    do_DELETE = do_POST
+
+
+def main():
+    if os.geteuid() == 0:
+        print("kiln web: refusing to run as root", file=sys.stderr)
+        return 1
+
+    server = ThreadingHTTPServer((HOST, PORT), KilnHandler)
+    server.daemon_threads = True
+    print(f"kiln web: listening on http://{HOST}:{PORT}", flush=True)
+    try:
+        server.serve_forever(poll_interval=0.5)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

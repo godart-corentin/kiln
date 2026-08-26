@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+import fcntl
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+BUILDS = Path("/var/lib/kiln/builds")
+BUILD_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+STEP_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+
+
+class KilnError(Exception):
+    pass
+
+
+def fail(message):
+    raise KilnError(message)
+
+
+def iso(value=None):
+    return (value or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z")
+
+
+def read_json(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        fail(f"file not found: {path}")
+    except json.JSONDecodeError as exc:
+        fail(f"invalid JSON {path}: {exc}")
+
+
+def write_json(path, data):
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with tmp.open("x", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        dir_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def update_step(build_dir, step_id, changes):
+    lock_path = build_dir / "status.lock"
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o640)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        path = build_dir / "status.json"
+        status = read_json(path)
+        if step_id not in status.get("steps", {}):
+            fail(f"step {step_id!r} missing from status")
+        status["steps"][step_id].update(changes)
+        write_json(path, status)
+    finally:
+        os.close(fd)
+
+
+def prepare_workspace(src_dir, work_dir, log):
+    if work_dir.exists():
+        shutil.rmtree(work_dir)
+    work_dir.mkdir(mode=0o750, parents=True)
+
+    log.write("Preparing isolated workspace...\n")
+    log.flush()
+
+    archive = subprocess.Popen(
+        [
+            "/usr/bin/tar", "--create", "--file=-",
+            "--directory", str(src_dir), ".",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=log,
+    )
+    extract = subprocess.Popen(
+        [
+            "/usr/bin/tar", "--extract", "--file=-",
+            "--directory", str(work_dir),
+            "--no-same-owner", "--no-same-permissions",
+        ],
+        stdin=archive.stdout,
+        stdout=log,
+        stderr=log,
+    )
+    assert archive.stdout is not None
+    archive.stdout.close()
+
+    extract_rc = extract.wait()
+    archive_rc = archive.wait()
+    if archive_rc != 0:
+        fail(f"workspace archive failed with exit code {archive_rc}")
+    if extract_rc != 0:
+        fail(f"workspace extraction failed with exit code {extract_rc}")
+
+    log.write("Workspace prepared successfully.\n")
+    log.flush()
+
+
+def container_name(build_id, step_id):
+    return f"kiln-{build_id[-32:]}-{step_id}"[:120]
+
+
+def main():
+    if len(sys.argv) != 3:
+        print("usage: execute <build-id> <step-id>", file=sys.stderr)
+        return 2
+
+    build_id, step_id = sys.argv[1:]
+    if not BUILD_RE.fullmatch(build_id):
+        fail("invalid build id")
+    if not STEP_RE.fullmatch(step_id):
+        fail("invalid step id")
+
+    build_dir = BUILDS / build_id
+    runtime = read_json(build_dir / "runtime.json")
+    if runtime.get("build_id") != build_id:
+        fail("runtime build id mismatch")
+    steps = runtime.get("steps")
+    if not isinstance(steps, dict):
+        fail("invalid runtime steps")
+    if step_id not in steps:
+        fail(f"unknown step: {step_id}")
+
+    step = steps[step_id]
+    if step.get("when") == "release" and runtime.get("job_type") != "release":
+        fail("release step cannot run for a CI job")
+
+    src_dir = build_dir / "src"
+    work_dir = build_dir / "work" / step_id
+    artifacts_dir = build_dir / "artifacts" / step_id
+    log_path = build_dir / "logs" / f"{step_id}.log"
+
+    artifacts_dir.mkdir(mode=0o750, parents=True, exist_ok=True)
+
+    started = datetime.now(timezone.utc)
+    update_step(
+        build_dir,
+        step_id,
+        {
+            "state": "running",
+            "started_at": iso(started),
+            "finished_at": None,
+            "duration_seconds": None,
+            "exit_code": None,
+        },
+    )
+
+    uid = os.geteuid()
+    gid = os.getegid()
+    runner = runtime["runner"]
+    name = container_name(build_id, step_id)
+    rc = 1
+    error = None
+
+    with log_path.open("w", encoding="utf-8") as log:
+        log.write(
+            f"build: {build_id}\n"
+            f"step: {step_id}\n"
+            f"image: {step['image']}\n"
+            f"network: {step['network']}\n"
+            f"limits: cpus={runner['cpus']} memory={runner['memory']} "
+            f"pids={runner['pids_limit']} timeout={runner['timeout_seconds']}s\n\n"
+        )
+        log.flush()
+
+        try:
+            prepare_workspace(src_dir, work_dir, log)
+        except Exception as exc:
+            error = str(exc)
+            log.write(f"\nKILN ERROR: {error}\n")
+            rc = 1
+        else:
+            docker_command = [
+                "/usr/bin/docker", "run",
+                "--rm",
+                "--name", name,
+                "--init",
+                "--pull=missing",
+                "--network", step["network"],
+                "--cpus", runner["cpus"],
+                "--memory", runner["memory"],
+                "--pids-limit", str(runner["pids_limit"]),
+                "--cap-drop", "ALL",
+                "--security-opt", "no-new-privileges=true",
+                "--user", f"{uid}:{gid}",
+                "--workdir", "/workspace",
+                "--env", "CI=true",
+                "--env", "HOME=/tmp",
+                "--env", f"KILN_BUILD_ID={build_id}",
+                "--env", f"KILN_PROJECT={runtime['project']}",
+                "--env", f"KILN_SHA={runtime['sha']}",
+                "--env", f"KILN_REF={runtime['ref']}",
+                "--env", f"KILN_TYPE={runtime['job_type']}",
+                "--env", f"KILN_STEP={step_id}",
+                "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m",
+                "--mount", f"type=bind,src={work_dir},dst=/workspace",
+                "--mount", f"type=bind,src={artifacts_dir},dst=/artifacts",
+                "--label", f"kiln.build_id={build_id}",
+                "--label", f"kiln.step={step_id}",
+                step["image"],
+                *step["command"],
+            ]
+
+            process = subprocess.Popen(
+                docker_command,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            try:
+                rc = process.wait(timeout=runner["timeout_seconds"])
+            except subprocess.TimeoutExpired:
+                error = f"timeout after {runner['timeout_seconds']} seconds"
+                subprocess.run(
+                    ["/usr/bin/docker", "rm", "-f", name],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+                try:
+                    process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                rc = 124
+                log.write(f"\nKILN ERROR: {error}\n")
+
+    finished = datetime.now(timezone.utc)
+    duration = round((finished - started).total_seconds(), 3)
+    state = "success" if rc == 0 else "failed"
+    changes = {
+        "state": state,
+        "exit_code": rc,
+        "finished_at": iso(finished),
+        "duration_seconds": duration,
+    }
+    if error:
+        changes["error"] = error
+    update_step(build_dir, step_id, changes)
+
+    print(f"{step_id}: {state} ({duration:.3f}s)")
+    return rc
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KilnError as exc:
+        print(f"kiln execute: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"kiln execute: unexpected error: {exc}", file=sys.stderr)
+        sys.exit(1)

@@ -1,0 +1,33 @@
+[Unit]
+Description=Kiln CI controller
+Requires=docker.service
+After=docker.service kiln-network.service
+Wants=kiln-network.service
+
+[Service]
+Type=oneshot
+User=kiln
+Group=kiln
+SupplementaryGroups=docker
+WorkingDirectory=/var/lib/kiln
+Environment=HOME=/var/lib/kiln
+ExecStart=/usr/local/libexec/kiln/controller
+UMask=0027
+TimeoutStartSec=infinity
+TimeoutStopSec=30s
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/kiln
+ReadWritePaths=/srv/git
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native

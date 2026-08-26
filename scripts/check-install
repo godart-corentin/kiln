@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+command -v kiln >/dev/null || { echo "kiln CLI missing" >&2; exit 1; }
+kiln doctor
