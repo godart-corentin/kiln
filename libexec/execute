@@ -217,6 +217,9 @@ def build_public_env(runtime, job_id, job, input_roots):
     if tag:
         env["KILN_TAG"] = tag
     env.update(job.get("env", {}))
+    env.setdefault("TMPDIR", "/run/kiln/tmp")
+    env.setdefault("TMP", "/run/kiln/tmp")
+    env.setdefault("TEMP", "/run/kiln/tmp")
     aliases = set()
     for producer in input_roots:
         key = input_env_name(producer)
@@ -511,7 +514,8 @@ def main():
                 "--security-opt", "no-new-privileges=true",
                 "--user", f"{uid}:{gid}",
                 "--workdir", "/workspace",
-                "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m",
+                "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=512m",
+                "--tmpfs", f"/run/kiln/tmp:rw,nosuid,nodev,exec,size=512m,uid={uid},gid={gid},mode=700",
                 "--mount", f"type=bind,src={work_dir},dst=/workspace",
                 "--label", f"kiln.build_id={build_id}",
                 "--label", f"kiln.job={job_id}",

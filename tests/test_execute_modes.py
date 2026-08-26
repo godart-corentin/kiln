@@ -98,6 +98,9 @@ def test_public_environment_includes_context_declared_env_and_input_paths():
     env = execute.build_public_env(runtime, "tests", job, input_roots)
     assert env["CI"] == "true"
     assert env["HOME"] == "/tmp"
+    assert env["TMPDIR"] == "/run/kiln/tmp"
+    assert env["TMP"] == "/run/kiln/tmp"
+    assert env["TEMP"] == "/run/kiln/tmp"
     assert env["KILN_BUILD_ID"] == "build-1"
     assert env["KILN_PROJECT"] == "demo"
     assert env["KILN_SHA"] == "a" * 40
@@ -252,6 +255,8 @@ def test_runner_security_flags_remain_present():
         '"no-new-privileges=true"',
     ):
         assert token in text, token
+    assert '"--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=512m"' in text
+    assert '"--tmpfs", f"/run/kiln/tmp:rw,nosuid,nodev,exec,size=512m,uid={uid},gid={gid},mode=700"' in text
     assert "/var/run/docker.sock" not in text
     assert "--privileged" not in text
 
