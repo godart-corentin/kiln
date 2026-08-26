@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ "${EUID}" -ne 0 ]]; then
+    echo "kiln doctor: must run as root" >&2
+    exit 1
+fi
+
+failed=0
+
+check() {
+    local label="$1"
+    shift
+
+    if "$@" >/dev/null 2>&1; then
+        printf '✓ %s\n' "$label"
+    else
+        printf '✗ %s\n' "$label"
+        failed=1
+    fi
+}
+
+for command in \
+    git \
+    python3 \
+    make \
+    docker \
+    setfacl \
+    iptables
+do
+    check \
+        "command ${command}" \
+        sh -c "command -v '${command}'"
+done
+
+for user in \
+    git \
+    kiln \
+    kiln-web
+do
+    check \
+        "user ${user}" \
+        getent passwd "$user"
+done
+
+for group in \
+    kiln-submit \
+    kiln-readers
+do
+    check \
+        "group ${group}" \
+        getent group "$group"
+done
+
+for path in \
+    /srv/git \
+    /var/lib/kiln/queue/incoming \
+    /var/lib/kiln/queue/running \
+    /var/lib/kiln/builds \
+    /etc/kiln/projects \
+    /etc/kiln/secrets \
+    /usr/local/libexec/kiln/controller
+do
+    check \
+        "$path" \
+        test -e "$path"
+done
+
+check \
+    "kiln-queue.path active" \
+    systemctl is-active --quiet kiln-queue.path
+
+check \
+    "kiln-network.service active" \
+    systemctl is-active --quiet kiln-network.service
+
+check \
+    "Docker network kiln-ci" \
+    docker network inspect kiln-ci
+
+check \
+    "Kiln controller executable" \
+    test -x /usr/local/libexec/kiln/controller
+
+check \
+    "Kiln execute executable" \
+    test -x /usr/local/libexec/kiln/execute
+
+check \
+    "Kiln enqueue executable" \
+    test -x /usr/local/libexec/kiln/enqueue
+
+exit "$failed"

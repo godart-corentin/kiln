@@ -117,7 +117,7 @@ install -o root -g root -m 0755 "$ROOT_DIR/bin/kiln" /usr/local/bin/kiln
 install -o root -g root -m 0755 "$ROOT_DIR/web/web" /usr/local/libexec/kiln/web
 
 for name in \
-    controller enqueue execute notify-discord rerun \
+    controller enqueue execute notify-discord rerun doctor \
     project-create project-delete project-webhook-set \
     git-key-add network-setup network-teardown
 do
