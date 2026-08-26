@@ -102,9 +102,16 @@ install -d -o kiln -g kiln -m 0750 \
     /var/lib/kiln/queue/running \
     /var/lib/kiln/builds \
     /var/lib/kiln/locks
+install -d -o kiln -g kiln -m 0700 /var/lib/kiln/secret-staging
 
 install -d -o root -g root -m 0755 /etc/kiln /etc/kiln/projects
 install -d -o root -g kiln -m 0750 /etc/kiln/secrets
+for project_config in /etc/kiln/projects/*.json; do
+    [[ -e "$project_config" ]] || continue
+    project_name="$(basename "$project_config" .json)"
+    [[ "$project_name" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]] || continue
+    install -d -o root -g kiln -m 0750 "/etc/kiln/secrets/$project_name"
+done
 install -d -o root -g root -m 0755 /usr/local/libexec/kiln /usr/local/libexec/kiln/git-hooks
 
 # CLI readers can traverse Kiln state and read build output, but not queue/secrets.
@@ -117,11 +124,14 @@ find /var/lib/kiln/builds -type d -exec chmod g-s {} +
 install -o root -g root -m 0755 "$ROOT_DIR/bin/kiln" /usr/local/bin/kiln
 install -o root -g root -m 0755 "$ROOT_DIR/web/web" /usr/local/libexec/kiln/web
 
-install -o root -g root -m 0644 "$ROOT_DIR/libexec/pipeline.py" /usr/local/libexec/kiln/pipeline.py
+for module in pipeline.py artifacts.py secrets.py; do
+    install -o root -g root -m 0644 "$ROOT_DIR/libexec/$module" "/usr/local/libexec/kiln/$module"
+done
 
 for name in \
     controller enqueue execute notify-discord rerun doctor \
     project-create project-delete project-webhook-set \
+    secret-set secret-set-file secret-list secret-delete \
     git-key-add network-setup network-teardown
 do
     install -o root -g root -m 0755 "$ROOT_DIR/libexec/$name" "/usr/local/libexec/kiln/$name"

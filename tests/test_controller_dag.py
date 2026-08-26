@@ -161,12 +161,92 @@ def test_finalize_marks_pending_jobs_skipped():
     assert final["pipeline"]["jobs"]["build"]["state"] == "skipped"
     assert final["pipeline"]["jobs"]["package"]["state"] == "skipped"
 
+
+def test_release_pipeline_secrets_are_validated_before_runtime():
+    release_job = job()
+    release_job.update({
+        "type": "release",
+        "event": "tag",
+        "ref": "refs/tags/v1.2.3",
+        "tag": "v1.2.3",
+    })
+    release_job.pop("branch", None)
+    raw = {
+        "schema": 1,
+        "jobs": {
+            "publish": {
+                "image": "alpine:3.22",
+                "run": ["true"],
+                "secrets": ["APPLE_ID"],
+            }
+        },
+    }
+    pipeline = pipeline_schema.load_pipeline_bytes(
+        json.dumps(raw).encode(),
+        kind="release",
+        branch=None,
+        default_max_parallel=3,
+        allowed_networks=("none", "kiln-ci"),
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "demo").mkdir()
+        old_root = controller.SECRETS_ROOT
+        try:
+            controller.SECRETS_ROOT = root
+            controller.secret_schema.store_secret(
+                root, "demo", "APPLE_ID", b"dev@example.com",
+                kind="text", scope="release"
+            )
+            runtime = controller.resolve_pipeline(
+                release_job, config(), pipeline, ".kiln/release.json"
+            )
+        finally:
+            controller.SECRETS_ROOT = old_root
+    assert runtime["jobs"]["publish"]["secrets"] == ["APPLE_ID"]
+
+
+def test_missing_release_secret_fails_before_execution():
+    release_job = job()
+    release_job.update({"type": "release", "ref": "refs/tags/v1.2.3", "tag": "v1.2.3"})
+    release_job.pop("branch", None)
+    raw = {
+        "schema": 1,
+        "jobs": {
+            "publish": {
+                "image": "alpine:3.22",
+                "run": ["true"],
+                "secrets": ["APPLE_ID"],
+            }
+        },
+    }
+    pipeline = pipeline_schema.load_pipeline_bytes(
+        json.dumps(raw).encode(), kind="release", branch=None,
+        default_max_parallel=3, allowed_networks=("none", "kiln-ci")
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "demo").mkdir()
+        old_root = controller.SECRETS_ROOT
+        try:
+            controller.SECRETS_ROOT = root
+            try:
+                controller.resolve_pipeline(release_job, config(), pipeline, ".kiln/release.json")
+            except controller.KilnError as exc:
+                assert "APPLE_ID" in str(exc)
+            else:
+                raise AssertionError("expected missing secret to fail")
+        finally:
+            controller.SECRETS_ROOT = old_root
+
 def main():
     tests = [
         test_runtime_uses_jobs_and_caps_parallelism,
         test_makefile_uses_resolved_job_dependencies_without_group_targets,
         test_status_contains_resolved_pipeline_jobs,
         test_finalize_marks_pending_jobs_skipped,
+        test_release_pipeline_secrets_are_validated_before_runtime,
+        test_missing_release_secret_fails_before_execution,
     ]
     for test in tests:
         test()

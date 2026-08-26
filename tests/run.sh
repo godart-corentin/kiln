@@ -10,6 +10,8 @@ for test in \
     test_static.py \
     test_install_web.py \
     test_pipeline.py \
+    test_artifacts.py \
+    test_secrets.py \
     test_branch_pipelines.py \
     test_controller_dag.py \
     test_execute_modes.py \

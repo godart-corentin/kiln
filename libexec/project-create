@@ -22,6 +22,7 @@ project="$1"
 repo="${GIT_ROOT}/${project}.git"
 config="${CONFIG_ROOT}/${project}.json"
 secret="${SECRETS_ROOT}/${project}.discord-webhook"
+secret_dir="${SECRETS_ROOT}/${project}"
 
 getent passwd git >/dev/null || die "Linux user 'git' does not exist"
 getent passwd kiln >/dev/null || die "Linux user 'kiln' does not exist"
@@ -43,10 +44,12 @@ fi
 [[ ! -e "$repo" ]] || die "repository already exists: $repo"
 [[ ! -e "$config" ]] || die "project configuration already exists: $config"
 [[ ! -e "$secret" ]] || die "Discord secret already exists: $secret"
+[[ ! -e "$secret_dir" ]] || die "project secret directory already exists: $secret_dir"
 
 created_repo=0
 created_config=0
 created_secret=0
+created_secret_dir=0
 tmp_config=""
 
 cleanup_on_error() {
@@ -56,6 +59,7 @@ cleanup_on_error() {
         [[ -n "$tmp_config" ]] && rm -f -- "$tmp_config"
         [[ "$created_config" -eq 1 ]] && rm -f -- "$config"
         [[ "$created_secret" -eq 1 ]] && rm -f -- "$secret"
+        [[ "$created_secret_dir" -eq 1 ]] && rm -rf -- "$secret_dir"
         [[ "$created_repo" -eq 1 ]] && rm -rf -- "$repo"
     fi
     exit "$rc"
@@ -112,6 +116,8 @@ mv -- "$tmp_config" "$config"
 tmp_config=""
 created_config=1
 
+install -d -o root -g kiln -m 0750 "$secret_dir"
+created_secret_dir=1
 install -o root -g kiln -m 0640 /dev/null "$secret"
 created_secret=1
 
@@ -138,6 +144,7 @@ echo "Created:"
 echo "  repository: $repo"
 echo "  config:     $config"
 echo "  secret:     $secret"
+echo "  secrets:    $secret_dir"
 echo "  hook:       $repo/hooks/post-receive"
 echo
 echo "Development machine:"

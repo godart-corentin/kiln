@@ -56,6 +56,7 @@ def main() -> int:
     repo = GIT_ROOT / f"{project}.git"
     config_path = CONFIG_ROOT / f"{project}.json"
     secret_path = SECRETS_ROOT / f"{project}.discord-webhook"
+    secret_dir = SECRETS_ROOT / project
 
     if not config_path.is_file():
         fail(f"project does not exist: {project}")
@@ -68,6 +69,11 @@ def main() -> int:
     configured_secret = config.get("discord", {}).get("webhook_file")
     if configured_secret is not None and configured_secret != str(secret_path):
         fail("refusing deletion: unexpected Discord secret path")
+
+    if secret_dir.is_symlink():
+        fail(f"secret directory is unexpectedly a symlink: {secret_dir}")
+    if secret_dir.exists() and not secret_dir.is_dir():
+        fail(f"secret directory is not a directory: {secret_dir}")
 
     jobs = active_jobs(project)
     if jobs:
@@ -88,6 +94,8 @@ def main() -> int:
 
     config_path.unlink(missing_ok=True)
     secret_path.unlink(missing_ok=True)
+    if secret_dir.exists():
+        shutil.rmtree(secret_dir)
 
     print(f"Deleted Kiln project: {project}")
     print("Build history was preserved.")

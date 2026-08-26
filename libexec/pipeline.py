@@ -80,6 +80,39 @@ def _validate_env(value, *, job_name: str):
     return result
 
 
+def _validate_artifacts(value, *, job_name: str):
+    patterns = _validate_string_list(
+        value if value is not None else [],
+        label=f"job {job_name!r}: invalid artifacts",
+        max_items=128,
+    )
+    seen = set()
+    for pattern in patterns:
+        path = PurePosixPath(pattern)
+        if path.is_absolute() or ".." in path.parts or pattern.endswith("/"):
+            fail(f"job {job_name!r}: invalid artifact pattern {pattern!r}")
+        if pattern in seen:
+            fail(f"job {job_name!r}: duplicate artifact pattern {pattern!r}")
+        seen.add(pattern)
+    return patterns
+
+
+def _validate_secrets(value, *, job_name: str):
+    names = _validate_string_list(
+        value if value is not None else [],
+        label=f"job {job_name!r}: invalid secrets",
+        max_items=64,
+    )
+    seen = set()
+    for name in names:
+        if not ENV_RE.fullmatch(name) or name.startswith("KILN_"):
+            fail(f"job {job_name!r}: invalid secret name {name!r}")
+        if name in seen:
+            fail(f"job {job_name!r}: duplicate secret {name!r}")
+        seen.add(name)
+    return names
+
+
 def _normalize_job(name: str, spec: dict, *, allowed_networks: tuple[str, ...]):
     if not isinstance(name, str) or not NAME_RE.fullmatch(name):
         fail(f"invalid job name: {name!r}")
@@ -117,8 +150,12 @@ def _normalize_job(name: str, spec: dict, *, allowed_networks: tuple[str, ...]):
 
     needs = _validate_string_list(spec.get("needs", []), label=f"job {name!r}: invalid needs")
     inputs = _validate_string_list(spec.get("inputs", []), label=f"job {name!r}: invalid inputs")
-    secrets = _validate_string_list(spec.get("secrets", []), label=f"job {name!r}: invalid secrets")
-    artifacts = _validate_string_list(spec.get("artifacts", []), label=f"job {name!r}: invalid artifacts")
+    secrets = _validate_secrets(spec.get("secrets"), job_name=name)
+    artifacts = _validate_artifacts(spec.get("artifacts"), job_name=name)
+    env = _validate_env(spec.get("env"), job_name=name)
+    overlap = sorted(set(env) & set(secrets))
+    if overlap:
+        fail(f"job {name!r}: environment and secret names overlap: {', '.join(overlap)}")
 
     normalized = {
         "name": name,
@@ -129,7 +166,7 @@ def _normalize_job(name: str, spec: dict, *, allowed_networks: tuple[str, ...]):
         "resolved_inputs": [],
         "image": image,
         "network": network,
-        "env": _validate_env(spec.get("env"), job_name=name),
+        "env": env,
         "secrets": secrets,
         "artifacts": artifacts,
         mode: execution,
@@ -203,6 +240,37 @@ def _validate_dag(jobs: dict[str, dict]) -> None:
         visit(name)
 
 
+def _validate_inputs_are_dependencies(jobs: dict[str, dict]) -> None:
+    cache: dict[str, set[str]] = {}
+
+    def ancestors(name: str) -> set[str]:
+        if name in cache:
+            return cache[name]
+        result: set[str] = set()
+        for dep in jobs[name]["resolved_needs"]:
+            result.add(dep)
+            result.update(ancestors(dep))
+        cache[name] = result
+        return result
+
+    for name, job in jobs.items():
+        allowed = ancestors(name)
+        aliases: dict[str, str] = {}
+        for producer in job["resolved_inputs"]:
+            if producer not in allowed:
+                fail(f"job {name!r}: input {producer!r} is not a dependency")
+            if not jobs[producer]["artifacts"]:
+                fail(f"job {name!r}: input producer {producer!r} declares no artifacts")
+            alias = producer.upper().replace("-", "_")
+            previous = aliases.get(alias)
+            if previous is not None and previous != producer:
+                fail(
+                    f"job {name!r}: input environment alias collision between "
+                    f"{previous!r} and {producer!r}"
+                )
+            aliases[alias] = producer
+
+
 def load_ci_trigger_bytes(raw: bytes) -> dict:
     try:
         data = json.loads(raw.decode("utf-8"))
@@ -247,6 +315,11 @@ def load_pipeline_bytes(
         for name, spec in raw_jobs.items()
     }
 
+    if kind == "ci":
+        for name, job in jobs.items():
+            if job["secrets"]:
+                fail(f"job {name!r}: secrets are release-only")
+
     groups = _collect_groups(jobs)
     for name, job in jobs.items():
         job["resolved_needs"] = _resolve_refs(
@@ -256,6 +329,7 @@ def load_pipeline_bytes(
             job["inputs"], jobs=jobs, groups=groups, owner=name, field="inputs"
         )
     _validate_dag(jobs)
+    _validate_inputs_are_dependencies(jobs)
 
     normalized = {
         "schema": 1,

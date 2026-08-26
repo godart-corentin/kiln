@@ -6,6 +6,7 @@ import os
 import pwd
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -33,6 +34,15 @@ if _PIPELINE_SPEC is None or _PIPELINE_SPEC.loader is None:
     raise RuntimeError(f"cannot load pipeline module: {PIPELINE_MODULE_PATH}")
 pipeline_schema = importlib.util.module_from_spec(_PIPELINE_SPEC)
 _PIPELINE_SPEC.loader.exec_module(pipeline_schema)
+
+SECRETS_ROOT = Path("/etc/kiln/secrets")
+SECRET_STAGING = Path("/var/lib/kiln/secret-staging")
+SECRETS_MODULE_PATH = Path(__file__).resolve().with_name("secrets.py")
+_SECRETS_SPEC = importlib.util.spec_from_file_location("kiln_secrets", SECRETS_MODULE_PATH)
+if _SECRETS_SPEC is None or _SECRETS_SPEC.loader is None:
+    raise RuntimeError(f"cannot load secrets module: {SECRETS_MODULE_PATH}")
+secret_schema = importlib.util.module_from_spec(_SECRETS_SPEC)
+_SECRETS_SPEC.loader.exec_module(secret_schema)
 
 
 class KilnError(Exception):
@@ -320,6 +330,19 @@ def select_pipeline(job, cfg):
 
     fail(f"unsupported job type: {job['type']}")
 
+def validate_pipeline_secrets(job, pipeline):
+    for job_name, spec in pipeline.get("jobs", {}).items():
+        names = spec.get("secrets", [])
+        if not names:
+            continue
+        try:
+            secret_schema.validate_requested_secrets(
+                SECRETS_ROOT, job["project"], names, job["type"]
+            )
+        except secret_schema.SecretError as exc:
+            fail(f"job {job_name!r}: {exc}")
+
+
 def resolve_pipeline(job, cfg, pipeline, pipeline_path):
     if not isinstance(pipeline, dict) or pipeline.get("schema") != 1:
         fail("pipeline.schema must be 1")
@@ -329,6 +352,8 @@ def resolve_pipeline(job, cfg, pipeline, pipeline_path):
         fail("normalized pipeline.jobs missing")
     if not isinstance(groups, dict):
         fail("normalized pipeline.groups missing")
+
+    validate_pipeline_secrets(job, pipeline)
 
     runner = cfg["runner"]
     requested = pipeline.get("max_parallel", runner["max_parallel"])
@@ -446,6 +471,7 @@ def _status_job(spec):
         "finished_at": None,
         "duration_seconds": None,
         "log": None,
+        "artifacts": [],
     }
 
 
@@ -561,6 +587,7 @@ def cleanup_containers(build_id):
             stderr=subprocess.DEVNULL,
             check=False,
         )
+    shutil.rmtree(SECRET_STAGING / build_id, ignore_errors=True)
 
 
 def recover_stale():
@@ -689,6 +716,7 @@ def process(job_path):
         cleanup_pin(job, cfg)
         job_path.unlink(missing_ok=True)
         notify(job["id"], build_dir)
+        shutil.rmtree(SECRET_STAGING / job["id"], ignore_errors=True)
 
 
 def main():

@@ -11,6 +11,8 @@ PYTHON_FILES = [
     ROOT / "bin" / "kiln",
     ROOT / "libexec" / "controller",
     ROOT / "libexec" / "pipeline.py",
+    ROOT / "libexec" / "artifacts.py",
+    ROOT / "libexec" / "secrets.py",
     ROOT / "libexec" / "enqueue",
     ROOT / "libexec" / "execute",
     ROOT / "libexec" / "notify-discord",
@@ -18,6 +20,10 @@ PYTHON_FILES = [
     ROOT / "libexec" / "project-delete",
     ROOT / "libexec" / "project-webhook-set",
     ROOT / "libexec" / "git-key-add",
+    ROOT / "libexec" / "secret-set",
+    ROOT / "libexec" / "secret-set-file",
+    ROOT / "libexec" / "secret-list",
+    ROOT / "libexec" / "secret-delete",
     ROOT / "web" / "web",
 ]
 
@@ -28,6 +34,7 @@ BASH_FILES = [
     ROOT / "install-web.sh",
     ROOT / "uninstall-web.sh",
     ROOT / "libexec" / "project-create",
+    ROOT / "libexec" / "doctor",
     ROOT / "libexec" / "network-setup",
     ROOT / "libexec" / "network-teardown",
     ROOT / "libexec" / "git-hooks" / "post-receive",
@@ -74,12 +81,17 @@ def main():
         "/var/run/docker.sock",
         "--privileged",
         "--network=host",
-        "/etc/kiln/secrets",
     ]
     for needle in forbidden:
         if needle in execute_text:
             failed = True
             print(f"FAIL security: execute contains forbidden token {needle!r}", file=sys.stderr)
+    if "src=/etc/kiln/secrets" in execute_text:
+        failed = True
+        print("FAIL security: execute mounts the persistent secrets directory", file=sys.stderr)
+    if "dst=/artifacts" in execute_text:
+        failed = True
+        print("FAIL schema: execute still exposes legacy /artifacts mount", file=sys.stderr)
     if not failed:
         print("OK security: Docker runner contains no forbidden mounts/options")
 

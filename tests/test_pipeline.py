@@ -156,8 +156,8 @@ def test_release_has_no_branch_trigger_requirement():
 
 def test_group_expansion_and_inputs():
     data = base_pipeline(jobs={
-        "lint": base_job(group="quality"),
-        "tests": base_job(group="quality"),
+        "lint": base_job(group="quality", artifacts=["lint/**"]),
+        "tests": base_job(group="quality", artifacts=["tests/**"]),
         "build": base_job(needs=["quality"], inputs=["quality"]),
     })
     result = parse(data)
@@ -224,6 +224,87 @@ def test_cross_group_job_dependency_is_allowed():
     assert result["jobs"]["assets"]["resolved_needs"] == ["lint"]
     assert result["jobs"]["package-linux"]["resolved_needs"] == ["assets"]
 
+
+def test_artifact_patterns_are_safe_and_non_empty():
+    good = base_pipeline(jobs={"x": base_job(artifacts=["dist/**", "release/*.zip"])})
+    assert parse(good)["jobs"]["x"]["artifacts"] == ["dist/**", "release/*.zip"]
+    expect_error(base_pipeline(jobs={"x": base_job(artifacts=["/tmp/out"])}), "invalid artifact")
+    expect_error(base_pipeline(jobs={"x": base_job(artifacts=["../out"])}), "invalid artifact")
+    expect_error(base_pipeline(jobs={"x": base_job(artifacts=[""])}), "invalid artifacts")
+
+
+def test_secret_names_are_environment_names_and_unique():
+    good = {
+        "schema": 1,
+        "jobs": {"release": base_job(secrets=["APPLE_ID", "CSC_KEY_PASSWORD"])},
+    }
+    assert parse(good, kind="release", branch=None)["jobs"]["release"]["secrets"] == [
+        "APPLE_ID", "CSC_KEY_PASSWORD"
+    ]
+    expect_error(
+        {"schema": 1, "jobs": {"release": base_job(secrets=["bad-name"])}},
+        "invalid secret",
+        kind="release",
+    )
+    expect_error(
+        {"schema": 1, "jobs": {"release": base_job(secrets=["APPLE_ID", "APPLE_ID"])}},
+        "duplicate secret",
+        kind="release",
+    )
+
+
+def test_ci_cannot_request_release_secrets():
+    expect_error(
+        base_pipeline(jobs={"tests": base_job(secrets=["APPLE_ID"])}),
+        "release-only",
+    )
+
+
+def test_inputs_must_be_completed_by_needs_dag():
+    data = base_pipeline(jobs={
+        "build": base_job(artifacts=["dist/**"]),
+        "publish": base_job(inputs=["build"]),
+    })
+    expect_error(data, "input 'build' is not a dependency")
+
+    data = base_pipeline(jobs={
+        "quality": base_job(artifacts=["reports/**"]),
+        "build": base_job(needs=["quality"], artifacts=["dist/**"]),
+        "publish": base_job(needs=["build"], inputs=["quality"]),
+    })
+    result = parse(data)
+    assert result["jobs"]["publish"]["resolved_inputs"] == ["quality"]
+
+    expect_error(
+        base_pipeline(jobs={
+            "build": base_job(),
+            "publish": base_job(needs=["build"], inputs=["build"]),
+        }),
+        "declares no artifacts",
+    )
+
+
+def test_env_and_secret_names_may_not_overlap():
+    data = {
+        "schema": 1,
+        "jobs": {
+            "release": base_job(env={"TOKEN": "public"}, secrets=["TOKEN"]),
+        },
+    }
+    expect_error(data, "overlap", kind="release")
+
+
+def test_input_environment_alias_collisions_are_rejected():
+    data = base_pipeline(jobs={
+        "foo-bar": base_job(artifacts=["a/**"]),
+        "foo_bar": base_job(artifacts=["b/**"]),
+        "publish": base_job(
+            needs=["foo-bar", "foo_bar"],
+            inputs=["foo-bar", "foo_bar"],
+        ),
+    })
+    expect_error(data, "input environment alias collision")
+
 def main():
     tests = [
         test_basic_normalization,
@@ -245,6 +326,12 @@ def main():
         test_group_expanded_cycle_is_rejected,
         test_dependency_deduplication_preserves_job_order,
         test_cross_group_job_dependency_is_allowed,
+        test_artifact_patterns_are_safe_and_non_empty,
+        test_secret_names_are_environment_names_and_unique,
+        test_ci_cannot_request_release_secrets,
+        test_inputs_must_be_completed_by_needs_dag,
+        test_env_and_secret_names_may_not_overlap,
+        test_input_environment_alias_collisions_are_rejected,
     ]
     for test in tests:
         test()

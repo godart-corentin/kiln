@@ -83,6 +83,112 @@ def test_status_updates_target_pipeline_job():
         status = json.loads((build / "status.json").read_text(encoding="utf-8"))
         assert status["pipeline"]["jobs"]["tests"]["state"] == "running"
 
+
+def test_public_environment_includes_context_declared_env_and_input_paths():
+    runtime = {
+        "build_id": "build-1",
+        "project": "demo",
+        "sha": "a" * 40,
+        "ref": "refs/heads/main",
+        "job_type": "ci",
+        "branch": "main",
+    }
+    job = {"env": {"NODE_ENV": "test"}, "secrets": ["APPLE_ID"]}
+    input_roots = {"package-linux": Path("/tmp/linux")}
+    env = execute.build_public_env(runtime, "tests", job, input_roots)
+    assert env["CI"] == "true"
+    assert env["HOME"] == "/tmp"
+    assert env["KILN_BUILD_ID"] == "build-1"
+    assert env["KILN_PROJECT"] == "demo"
+    assert env["KILN_SHA"] == "a" * 40
+    assert env["KILN_REF"] == "refs/heads/main"
+    assert env["KILN_JOB_TYPE"] == "ci"
+    assert env["KILN_JOB"] == "tests"
+    assert env["KILN_BRANCH"] == "main"
+    assert "KILN_TAG" not in env
+    assert env["NODE_ENV"] == "test"
+    assert "APPLE_ID" not in env
+    assert env["KILN_INPUT_PACKAGE_LINUX"] == "/run/kiln/inputs/package-linux"
+
+
+def test_input_mounts_are_read_only_and_separate():
+    roots = {
+        "linux": Path("/build/artifacts/linux"),
+        "windows": Path("/build/artifacts/windows"),
+    }
+    mounts = execute.build_input_mounts(roots)
+    assert len(mounts) == 2
+    assert "src=/build/artifacts/linux,dst=/run/kiln/inputs/linux,readonly" in mounts[0]
+    assert "src=/build/artifacts/windows,dst=/run/kiln/inputs/windows,readonly" in mounts[1]
+
+
+def test_collect_job_artifacts_uses_workspace_not_special_mount():
+    with tempfile.TemporaryDirectory() as tmp:
+        build = Path(tmp)
+        work = build / "work" / "package"
+        (work / "release").mkdir(parents=True)
+        (work / "release" / "demo.AppImage").write_text("binary", encoding="utf-8")
+        collected = execute.collect_job_artifacts(
+            build,
+            work,
+            "package",
+            {"artifacts": ["release/*.AppImage"]},
+        )
+        assert collected == ["release/demo.AppImage"]
+        assert (build / "artifacts" / "package" / "release" / "demo.AppImage").is_file()
+
+
+def test_secret_wrapper_contains_names_and_paths_but_no_values():
+    wrapper = execute.render_secret_wrapper({
+        "APPLE_ID": {"kind": "text", "scope": "release"},
+        "CSC_LINK": {"kind": "file", "scope": "release"},
+    })
+    assert 'export APPLE_ID="$(cat /run/kiln/secrets/APPLE_ID.value)"' in wrapper
+    assert 'export CSC_LINK="/run/kiln/secrets/CSC_LINK.value"' in wrapper
+    assert 'exec "$@"' in wrapper
+    assert "actual-secret" not in wrapper
+
+
+def test_prepare_secret_stage_is_outside_builds_and_contains_only_requested_files():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        secrets_root = root / "etc-secrets"
+        staging_root = root / "staging"
+        (secrets_root / "demo").mkdir(parents=True)
+
+        old_root = execute.SECRETS_ROOT
+        old_stage = execute.SECRET_STAGING
+        try:
+            execute.SECRETS_ROOT = secrets_root
+            execute.SECRET_STAGING = staging_root
+            execute.secret_schema.store_secret(
+                secrets_root, "demo", "APPLE_ID", b"dev@example.com",
+                kind="text", scope="release"
+            )
+            stage, metadata, redact = execute.prepare_secret_stage(
+                "build-1", "release", {"project": "demo", "job_type": "release"},
+                {"secrets": ["APPLE_ID"]},
+            )
+        finally:
+            execute.SECRETS_ROOT = old_root
+            execute.SECRET_STAGING = old_stage
+
+        assert stage == staging_root / "build-1" / "release"
+        assert (stage / "APPLE_ID.value").read_bytes() == b"dev@example.com"
+        assert metadata["APPLE_ID"]["kind"] == "text"
+        assert "dev@example.com" in redact
+        assert not list(stage.glob("*.json"))
+
+
+def test_redaction_masks_known_secret_tokens():
+    tokens = execute.redaction_tokens(["dev@example.com", "line1\nline2"])
+    text = "login dev@example.com\nline1\nline2\n"
+    redacted = execute.redact_text(text, tokens)
+    assert "dev@example.com" not in redacted
+    assert "line1" not in redacted
+    assert "line2" not in redacted
+    assert "***" in redacted
+
 def test_runner_security_flags_remain_present():
     text = EXECUTE_PATH.read_text(encoding="utf-8")
     for token in (
@@ -106,6 +212,12 @@ def main():
         test_execution_argv_for_script_stays_inside_workspace,
         test_execution_argv_for_command_is_direct_argv,
         test_status_updates_target_pipeline_job,
+        test_public_environment_includes_context_declared_env_and_input_paths,
+        test_input_mounts_are_read_only_and_separate,
+        test_collect_job_artifacts_uses_workspace_not_special_mount,
+        test_secret_wrapper_contains_names_and_paths_but_no_values,
+        test_prepare_secret_stage_is_outside_builds_and_contains_only_requested_files,
+        test_redaction_masks_known_secret_tokens,
         test_runner_security_flags_remain_present,
     ]
     for test in tests:

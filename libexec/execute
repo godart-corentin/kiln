@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import fcntl
+import importlib.util
 import json
 import os
 import re
@@ -7,12 +8,29 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 BUILDS = Path("/var/lib/kiln/builds")
 BUILD_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 JOB_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
+
+ARTIFACTS_MODULE_PATH = Path(__file__).resolve().with_name("artifacts.py")
+_ARTIFACTS_SPEC = importlib.util.spec_from_file_location("kiln_artifacts", ARTIFACTS_MODULE_PATH)
+if _ARTIFACTS_SPEC is None or _ARTIFACTS_SPEC.loader is None:
+    raise RuntimeError(f"cannot load artifacts module: {ARTIFACTS_MODULE_PATH}")
+artifacts_schema = importlib.util.module_from_spec(_ARTIFACTS_SPEC)
+_ARTIFACTS_SPEC.loader.exec_module(artifacts_schema)
+
+SECRETS_ROOT = Path("/etc/kiln/secrets")
+SECRET_STAGING = Path("/var/lib/kiln/secret-staging")
+SECRETS_MODULE_PATH = Path(__file__).resolve().with_name("secrets.py")
+_SECRETS_SPEC = importlib.util.spec_from_file_location("kiln_secrets", SECRETS_MODULE_PATH)
+if _SECRETS_SPEC is None or _SECRETS_SPEC.loader is None:
+    raise RuntimeError(f"cannot load secrets module: {SECRETS_MODULE_PATH}")
+secret_schema = importlib.util.module_from_spec(_SECRETS_SPEC)
+_SECRETS_SPEC.loader.exec_module(secret_schema)
 
 
 class KilnError(Exception):
@@ -101,6 +119,159 @@ def prepare_execution(build_dir, job_id, job):
     return [], list(job["command"])
 
 
+def input_env_name(job_id):
+    return "KILN_INPUT_" + job_id.upper().replace("-", "_")
+
+
+def build_input_mounts(input_roots):
+    mounts = []
+    for producer, root in input_roots.items():
+        mounts.append(
+            f"type=bind,src={root},dst=/run/kiln/inputs/{producer},readonly"
+        )
+    return mounts
+
+
+def build_public_env(runtime, job_id, job, input_roots):
+    env = {
+        "CI": "true",
+        "HOME": "/tmp",
+        "KILN_BUILD_ID": runtime["build_id"],
+        "KILN_PROJECT": runtime["project"],
+        "KILN_SHA": runtime["sha"],
+        "KILN_REF": runtime["ref"],
+        "KILN_JOB_TYPE": runtime["job_type"],
+        "KILN_JOB": job_id,
+    }
+    branch = runtime.get("branch")
+    tag = runtime.get("tag")
+    if branch:
+        env["KILN_BRANCH"] = branch
+    if tag:
+        env["KILN_TAG"] = tag
+    env.update(job.get("env", {}))
+    aliases = set()
+    for producer in input_roots:
+        key = input_env_name(producer)
+        if key in aliases:
+            fail(f"input environment alias collision for {producer!r}")
+        aliases.add(key)
+        env[key] = f"/run/kiln/inputs/{producer}"
+    return env
+
+
+def collect_job_artifacts(build_dir, work_dir, job_id, job):
+    patterns = job.get("artifacts", [])
+    if not patterns:
+        return []
+    dest = build_dir / "artifacts" / job_id
+    try:
+        return artifacts_schema.collect_artifacts(work_dir, patterns, dest)
+    except artifacts_schema.ArtifactError as exc:
+        fail(str(exc))
+
+
+def render_secret_wrapper(metadata):
+    lines = ["#!/bin/sh", "set -eu"]
+    for name, item in metadata.items():
+        path = f"/run/kiln/secrets/{name}.value"
+        if item["kind"] == "text":
+            lines.append(f'export {name}="$(cat {path})"')
+        elif item["kind"] == "file":
+            lines.append(f'export {name}="{path}"')
+        else:
+            fail(f"secret {name!r} has invalid kind")
+    lines.append('exec "$@"')
+    lines.append("")
+    return "\n".join(lines)
+
+
+def redaction_tokens(values):
+    tokens = set()
+    for value in values:
+        if not value:
+            continue
+        tokens.add(value)
+        for line in value.splitlines():
+            if line:
+                tokens.add(line)
+    return sorted(tokens, key=len, reverse=True)
+
+
+def redact_text(text, tokens):
+    for token in tokens:
+        text = text.replace(token, "***")
+    return text
+
+
+def prepare_secret_stage(build_id, job_id, runtime, job):
+    names = job.get("secrets", [])
+    if not names:
+        return None, {}, []
+    try:
+        metadata = secret_schema.validate_requested_secrets(
+            SECRETS_ROOT,
+            runtime["project"],
+            names,
+            runtime["job_type"],
+        )
+    except secret_schema.SecretError as exc:
+        fail(str(exc))
+
+    stage = SECRET_STAGING / build_id / job_id
+    if stage.exists():
+        shutil.rmtree(stage)
+    stage.mkdir(mode=0o700, parents=True)
+    stage.chmod(0o700)
+
+    redact_values = []
+    for name in names:
+        try:
+            data = secret_schema.read_secret_bytes(SECRETS_ROOT, runtime["project"], name)
+        except secret_schema.SecretError as exc:
+            fail(str(exc))
+        target = stage / f"{name}.value"
+        target.write_bytes(data)
+        target.chmod(0o400)
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            pass
+        else:
+            if text:
+                redact_values.append(text)
+
+    return stage, metadata, redact_values
+
+
+def prepare_secret_wrapper(build_dir, job_id, metadata):
+    if not metadata:
+        return None
+    commands_dir = build_dir / "commands"
+    commands_dir.mkdir(mode=0o750, parents=True, exist_ok=True)
+    wrapper = commands_dir / f"{job_id}.secrets.sh"
+    wrapper.write_text(render_secret_wrapper(metadata), encoding="utf-8")
+    wrapper.chmod(0o600)
+    return wrapper
+
+
+def cleanup_secret_stage(build_id, job_id):
+    stage = SECRET_STAGING / build_id / job_id
+    shutil.rmtree(stage, ignore_errors=True)
+    parent = stage.parent
+    try:
+        parent.rmdir()
+    except OSError:
+        pass
+
+
+def stream_redacted_output(process, log, tokens):
+    assert process.stdout is not None
+    for line in process.stdout:
+        log.write(redact_text(line, tokens))
+        log.flush()
+
+
 def prepare_workspace(src_dir, work_dir, log):
     if work_dir.exists():
         shutil.rmtree(work_dir)
@@ -170,10 +341,7 @@ def main():
 
     src_dir = build_dir / "src"
     work_dir = build_dir / "work" / job_id
-    artifacts_dir = build_dir / "artifacts" / job_id
     log_path = build_dir / "logs" / f"{job_id}.log"
-
-    artifacts_dir.mkdir(mode=0o750, parents=True, exist_ok=True)
 
     started = datetime.now(timezone.utc)
     update_job(
@@ -194,6 +362,11 @@ def main():
     name = container_name(build_id, job_id)
     rc = 1
     error = None
+    input_roots = None
+    collected = []
+    secret_stage = None
+    secret_metadata = {}
+    redact_values = []
 
     with log_path.open("w", encoding="utf-8") as log:
         log.write(
@@ -213,7 +386,41 @@ def main():
             log.write(f"\nKILN ERROR: {error}\n")
             rc = 1
         else:
+            try:
+                input_roots = artifacts_schema.resolve_input_roots(
+                    build_dir, job.get("resolved_inputs", [])
+                )
+            except artifacts_schema.ArtifactError as exc:
+                error = str(exc)
+                log.write(f"\nKILN ERROR: {error}\n")
+                rc = 1
+                input_roots = None
+
+        if error is None and input_roots is not None:
+            try:
+                secret_stage, secret_metadata, redact_values = prepare_secret_stage(
+                    build_id, job_id, runtime, job
+                )
+            except Exception as exc:
+                error = str(exc)
+                log.write(f"\nKILN ERROR: {error}\n")
+                rc = 1
+
+        if error is None and input_roots is not None:
             extra_mounts, execution_argv = prepare_execution(build_dir, job_id, job)
+            extra_mounts.extend(build_input_mounts(input_roots))
+            if secret_stage is not None:
+                extra_mounts.append(
+                    f"type=bind,src={secret_stage},dst=/run/kiln/secrets,readonly"
+                )
+                wrapper = prepare_secret_wrapper(build_dir, job_id, secret_metadata)
+                extra_mounts.append(
+                    f"type=bind,src={wrapper},dst=/run/kiln/secret-wrapper.sh,readonly"
+                )
+                execution_argv = [
+                    "/bin/sh", "/run/kiln/secret-wrapper.sh", *execution_argv
+                ]
+            public_env = build_public_env(runtime, job_id, job, input_roots)
             docker_command = [
                 "/usr/bin/docker", "run",
                 "--rm",
@@ -228,30 +435,32 @@ def main():
                 "--security-opt", "no-new-privileges=true",
                 "--user", f"{uid}:{gid}",
                 "--workdir", "/workspace",
-                "--env", "CI=true",
-                "--env", "HOME=/tmp",
-                "--env", f"KILN_BUILD_ID={build_id}",
-                "--env", f"KILN_PROJECT={runtime['project']}",
-                "--env", f"KILN_SHA={runtime['sha']}",
-                "--env", f"KILN_REF={runtime['ref']}",
-                "--env", f"KILN_JOB_TYPE={runtime['job_type']}",
-                "--env", f"KILN_JOB={job_id}",
                 "--tmpfs", "/tmp:rw,nosuid,nodev,size=512m",
                 "--mount", f"type=bind,src={work_dir},dst=/workspace",
-                "--mount", f"type=bind,src={artifacts_dir},dst=/artifacts",
                 "--label", f"kiln.build_id={build_id}",
                 "--label", f"kiln.job={job_id}",
             ]
+            for key, value in public_env.items():
+                docker_command.extend(["--env", f"{key}={value}"])
             for mount in extra_mounts:
                 docker_command.extend(["--mount", mount])
             docker_command.extend([job["image"], *execution_argv])
 
             process = subprocess.Popen(
                 docker_command,
-                stdout=log,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                errors="replace",
+                bufsize=1,
             )
+            tokens = redaction_tokens(redact_values)
+            reader = threading.Thread(
+                target=stream_redacted_output,
+                args=(process, log, tokens),
+                daemon=True,
+            )
+            reader.start()
             try:
                 rc = process.wait(timeout=runner["timeout_seconds"])
             except subprocess.TimeoutExpired:
@@ -269,7 +478,26 @@ def main():
                     process.wait()
                 rc = 124
                 log.write(f"\nKILN ERROR: {error}\n")
+            finally:
+                reader.join(timeout=15)
 
+            if rc == 0:
+                try:
+                    collected = collect_job_artifacts(build_dir, work_dir, job_id, job)
+                except Exception as exc:
+                    error = str(exc)
+                    rc = 1
+                    collected = []
+                    log.write(f"\nKILN ERROR: artifact collection failed: {error}\n")
+                else:
+                    if collected:
+                        log.write("\nCollected artifacts:\n")
+                        for path in collected:
+                            log.write(f"  {path}\n")
+            else:
+                collected = []
+
+    cleanup_secret_stage(build_id, job_id)
     finished = datetime.now(timezone.utc)
     duration = round((finished - started).total_seconds(), 3)
     state = "success" if rc == 0 else "failed"
@@ -278,6 +506,7 @@ def main():
         "exit_code": rc,
         "finished_at": iso(finished),
         "duration_seconds": duration,
+        "artifacts": collected,
     }
     if error:
         changes["error"] = error

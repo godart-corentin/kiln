@@ -57,6 +57,7 @@ for path in \
     /var/lib/kiln/queue/incoming \
     /var/lib/kiln/queue/running \
     /var/lib/kiln/builds \
+    /var/lib/kiln/secret-staging \
     /etc/kiln/projects \
     /etc/kiln/secrets \
     /usr/local/libexec/kiln/controller
@@ -89,5 +90,11 @@ check \
 check \
     "Kiln enqueue executable" \
     test -x /usr/local/libexec/kiln/enqueue
+
+for helper in secret-set secret-set-file secret-list secret-delete; do
+    check \
+        "Kiln ${helper} executable" \
+        test -x "/usr/local/libexec/kiln/${helper}"
+done
 
 exit "$failed"
