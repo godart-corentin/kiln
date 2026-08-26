@@ -10,12 +10,15 @@
   "jobs": {
     "tests": {
       "group": "quality",
-      "image": "node:22-bookworm",
+      "image": "node:24-bookworm",
       "network": "kiln-ci",
       "run": [
-        "corepack pnpm@11.15.1 install --frozen-lockfile",
+        "pnpm install --frozen-lockfile",
         "pnpm test"
-      ]
+      ],
+      "tools": {
+        "pnpm": "11.15.1"
+      }
     }
   }
 }

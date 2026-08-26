@@ -259,6 +259,31 @@ def test_legacy_pipeline_is_not_used():
         temp.cleanup()
 
 
+
+def test_tools_auto_resolution_uses_package_json_from_exact_sha():
+    pipeline_data = pipeline(["main"], "tests")
+    pipeline_data["jobs"]["tests"]["tools"] = ["pnpm"]
+    temp, work, repo, old_sha = make_repo({
+        ".kiln/pipelines/main.json": pipeline_data,
+        "package.json": {"packageManager": "pnpm@11.15.1"},
+    })
+    try:
+        package = json.loads((work / "package.json").read_text(encoding="utf-8"))
+        package["packageManager"] = "pnpm@11.16.0"
+        write_json(work / "package.json", package)
+        run("git", "add", ".", cwd=work)
+        run("git", "commit", "-m", "bump pnpm", cwd=work)
+        new_sha = git_output("git", "rev-parse", "HEAD", cwd=work)
+        run("git", "push", str(repo), "main", cwd=work)
+
+        cfg = base_config(repo)
+        _path, old = controller.select_pipeline(ci_job(old_sha, "main"), cfg)
+        _path, new = controller.select_pipeline(ci_job(new_sha, "main"), cfg)
+        assert old["jobs"]["tests"]["tools"] == {"pnpm": "11.15.1"}
+        assert new["jobs"]["tests"]["tools"] == {"pnpm": "11.16.0"}
+    finally:
+        temp.cleanup()
+
 def main():
     tests = [
         test_enqueue_classifies_every_branch_as_ci,
@@ -268,6 +293,7 @@ def main():
         test_release_uses_only_fixed_release_pipeline,
         test_release_requires_fixed_release_pipeline,
         test_legacy_pipeline_is_not_used,
+        test_tools_auto_resolution_uses_package_json_from_exact_sha,
     ]
 
     for test in tests:

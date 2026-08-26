@@ -189,6 +189,34 @@ def test_redaction_masks_known_secret_tokens():
     assert "line2" not in redacted
     assert "***" in redacted
 
+
+def test_tools_wrapper_provides_exact_pnpm_without_root_install():
+    wrapper = execute.render_tools_wrapper({"pnpm": "11.15.1"})
+    assert 'TOOLS_ROOT="/tmp/kiln-tools"' in wrapper
+    assert 'COREPACK_HOME="$TOOLS_ROOT/corepack"' in wrapper
+    assert 'PATH="$TOOLS_ROOT/bin:$PATH"' in wrapper
+    assert 'corepack pnpm@11.15.1 "$@"' in wrapper
+    assert "npm install --global" not in wrapper
+    assert "corepack enable" not in wrapper
+    assert "/usr/local" not in wrapper
+
+
+def test_prepare_tools_wrapper_is_read_only_mount():
+    with tempfile.TemporaryDirectory() as tmp:
+        build = Path(tmp)
+        mount, argv = execute.prepare_tools_wrapper(
+            build, "tests", {"pnpm": "11.15.1"}, ["/bin/sh", "/run/kiln/job.sh"]
+        )
+        assert "dst=/run/kiln/tools-wrapper.sh" in mount
+        assert "readonly" in mount
+        assert argv == [
+            "/bin/sh", "/run/kiln/tools-wrapper.sh",
+            "/bin/sh", "/run/kiln/job.sh",
+        ]
+        generated = build / "commands" / "tests.tools.sh"
+        assert generated.is_file()
+        assert "pnpm@11.15.1" in generated.read_text(encoding="utf-8")
+
 def test_runner_security_flags_remain_present():
     text = EXECUTE_PATH.read_text(encoding="utf-8")
     for token in (
@@ -218,6 +246,8 @@ def main():
         test_secret_wrapper_contains_names_and_paths_but_no_values,
         test_prepare_secret_stage_is_outside_builds_and_contains_only_requested_files,
         test_redaction_masks_known_secret_tokens,
+        test_tools_wrapper_provides_exact_pnpm_without_root_install,
+        test_prepare_tools_wrapper_is_read_only_mount,
         test_runner_security_flags_remain_present,
     ]
     for test in tests:

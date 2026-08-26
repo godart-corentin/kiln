@@ -22,6 +22,7 @@ CI_PIPELINE_ROOT = ".kiln/pipelines"
 RELEASE_PIPELINE = ".kiln/release.json"
 MAX_PIPELINES = 64
 MAX_PIPELINE_BYTES = 256 * 1024
+MAX_PACKAGE_JSON_BYTES = 1024 * 1024
 
 PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 JOB_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
@@ -231,6 +232,23 @@ def load_pipeline_path(repo, sha, path):
     return raw
 
 
+def load_package_manager(repo, sha):
+    result = git(repo, "show", f"{sha}:package.json")
+    if result.returncode:
+        return None
+    raw = result.stdout.encode("utf-8")
+    if len(raw) > MAX_PACKAGE_JSON_BYTES:
+        return None
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    value = data.get("packageManager")
+    return value if isinstance(value, str) else None
+
+
 def list_ci_pipeline_paths(repo, sha):
     result = git(
         repo,
@@ -274,7 +292,7 @@ def job_branch(job):
     return None
 
 
-def parse_pipeline(raw, *, path, kind, cfg, branch=None):
+def parse_pipeline(raw, *, path, kind, cfg, branch=None, package_manager=None):
     try:
         return pipeline_schema.load_pipeline_bytes(
             raw,
@@ -282,6 +300,7 @@ def parse_pipeline(raw, *, path, kind, cfg, branch=None):
             branch=branch,
             default_max_parallel=cfg["runner"]["max_parallel"],
             allowed_networks=tuple(cfg["runner"]["allowed_networks"]),
+            package_manager=package_manager,
         )
     except pipeline_schema.PipelineError as exc:
         fail(f"{path}: {exc}")
@@ -311,18 +330,24 @@ def select_ci_pipeline(job, cfg):
         return None
 
     path, raw = matches[0]
-    return path, parse_pipeline(raw, path=path, kind="ci", cfg=cfg, branch=branch)
+    package_manager = load_package_manager(repo, job["sha"])
+    return path, parse_pipeline(
+        raw, path=path, kind="ci", cfg=cfg, branch=branch,
+        package_manager=package_manager,
+    )
 
 
 def select_pipeline(job, cfg):
     repo = Path(cfg["repository"])
     if job["type"] == "release":
         raw = load_pipeline_path(repo, job["sha"], RELEASE_PIPELINE)
+        package_manager = load_package_manager(repo, job["sha"])
         return RELEASE_PIPELINE, parse_pipeline(
             raw,
             path=RELEASE_PIPELINE,
             kind="release",
             cfg=cfg,
+            package_manager=package_manager,
         )
 
     if job["type"] == "ci":
@@ -472,6 +497,7 @@ def _status_job(spec):
         "duration_seconds": None,
         "log": None,
         "artifacts": [],
+        "tools": dict(spec.get("tools", {})),
     }
 
 

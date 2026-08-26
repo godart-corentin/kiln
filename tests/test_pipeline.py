@@ -38,19 +38,20 @@ def base_pipeline(**updates):
     return data
 
 
-def parse(obj, *, kind="ci", branch="main", default_max_parallel=3):
+def parse(obj, *, kind="ci", branch="main", package_manager=None, default_max_parallel=3):
     return pipeline.load_pipeline_bytes(
         json.dumps(obj).encode(),
         kind=kind,
         branch=branch,
+        package_manager=package_manager,
         default_max_parallel=default_max_parallel,
         allowed_networks=("none", "kiln-ci"),
     )
 
 
-def expect_error(obj, message, *, kind="ci"):
+def expect_error(obj, message, *, kind="ci", package_manager=None):
     try:
-        parse(obj, kind=kind)
+        parse(obj, kind=kind, package_manager=package_manager)
     except pipeline.PipelineError as exc:
         assert message in str(exc), (message, str(exc))
     else:
@@ -75,6 +76,7 @@ def test_basic_normalization():
     assert job["env"] == {}
     assert job["secrets"] == []
     assert job["artifacts"] == []
+    assert job["tools"] == {}
     assert job["run"] == ["true"]
 
 
@@ -305,6 +307,54 @@ def test_input_environment_alias_collisions_are_rejected():
     })
     expect_error(data, "input environment alias collision")
 
+
+def test_tools_explicit_version_normalizes_to_map():
+    data = base_pipeline(jobs={
+        "tests": base_job(tools={"pnpm": "11.15.1"}),
+    })
+    result = parse(data)
+    assert result["jobs"]["tests"]["tools"] == {"pnpm": "11.15.1"}
+
+
+def test_tools_list_resolves_from_package_manager():
+    data = base_pipeline(jobs={
+        "tests": base_job(tools=["pnpm"]),
+    })
+    result = parse(data, package_manager="pnpm@11.15.1")
+    assert result["jobs"]["tests"]["tools"] == {"pnpm": "11.15.1"}
+
+
+def test_tools_list_accepts_package_manager_integrity_suffix():
+    data = base_pipeline(jobs={
+        "tests": base_job(tools=["pnpm"]),
+    })
+    result = parse(data, package_manager="pnpm@11.15.1+sha512.deadbeef")
+    assert result["jobs"]["tests"]["tools"] == {"pnpm": "11.15.1"}
+
+
+def test_tools_auto_requires_matching_package_manager():
+    data = base_pipeline(jobs={
+        "tests": base_job(tools=["pnpm"]),
+    })
+    expect_error(data, "packageManager", package_manager=None)
+    expect_error(data, "packageManager", package_manager="npm@11.0.0")
+
+
+def test_tools_reject_unknown_tools_invalid_versions_and_duplicates():
+    expect_error(
+        base_pipeline(jobs={"tests": base_job(tools={"yarn": "4.0.0"})}),
+        "unsupported tool",
+    )
+    expect_error(
+        base_pipeline(jobs={"tests": base_job(tools={"pnpm": "latest"})}),
+        "invalid pnpm version",
+    )
+    expect_error(
+        base_pipeline(jobs={"tests": base_job(tools=["pnpm", "pnpm"])}),
+        "duplicate tool",
+        package_manager="pnpm@11.15.1",
+    )
+
 def main():
     tests = [
         test_basic_normalization,
@@ -332,6 +382,11 @@ def main():
         test_inputs_must_be_completed_by_needs_dag,
         test_env_and_secret_names_may_not_overlap,
         test_input_environment_alias_collisions_are_rejected,
+        test_tools_explicit_version_normalizes_to_map,
+        test_tools_list_resolves_from_package_manager,
+        test_tools_list_accepts_package_manager_integrity_suffix,
+        test_tools_auto_requires_matching_package_manager,
+        test_tools_reject_unknown_tools_invalid_versions_and_duplicates,
     ]
     for test in tests:
         test()

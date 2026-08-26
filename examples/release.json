@@ -4,23 +4,29 @@
   "jobs": {
     "validate": {
       "group": "quality",
-      "image": "node:22-bookworm",
+      "image": "node:24-bookworm",
       "network": "kiln-ci",
       "run": [
-        "corepack pnpm@11.15.1 install --frozen-lockfile",
+        "pnpm install --frozen-lockfile",
         "pnpm test"
-      ]
+      ],
+      "tools": {
+        "pnpm": "11.15.1"
+      }
     },
     "package-linux": {
       "group": "package",
       "needs": [
         "quality"
       ],
-      "image": "node:22-bookworm",
+      "image": "node:24-bookworm",
       "network": "kiln-ci",
       "run": [
         "pnpm dist -- --linux"
-      ]
+      ],
+      "tools": {
+        "pnpm": "11.15.1"
+      }
     }
   }
 }

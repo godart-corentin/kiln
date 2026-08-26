@@ -6,6 +6,8 @@ from pathlib import PurePosixPath
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 ENV_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+TOOL_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
+SUPPORTED_TOOLS = {"pnpm"}
 
 
 class PipelineError(ValueError):
@@ -97,6 +99,50 @@ def _validate_artifacts(value, *, job_name: str):
     return patterns
 
 
+def _package_manager_version(package_manager: str | None, tool: str, *, job_name: str) -> str:
+    if not isinstance(package_manager, str) or not package_manager.startswith(tool + "@"):
+        fail(
+            f"job {job_name!r}: tools requests {tool!r} but package.json "
+            f"packageManager must declare {tool}@<version>"
+        )
+    version = package_manager[len(tool) + 1:].split("+", 1)[0]
+    if not TOOL_VERSION_RE.fullmatch(version):
+        fail(f"job {job_name!r}: invalid {tool} version in packageManager")
+    return version
+
+
+def _validate_tools(value, *, job_name: str, package_manager: str | None):
+    if value is None:
+        return {}
+
+    if isinstance(value, list):
+        names = _validate_string_list(
+            value, label=f"job {job_name!r}: invalid tools", max_items=8
+        )
+        result = {}
+        for name in names:
+            if name in result:
+                fail(f"job {job_name!r}: duplicate tool {name!r}")
+            if name not in SUPPORTED_TOOLS:
+                fail(f"job {job_name!r}: unsupported tool {name!r}")
+            result[name] = _package_manager_version(
+                package_manager, name, job_name=job_name
+            )
+        return result
+
+    if not isinstance(value, dict):
+        fail(f"job {job_name!r}: invalid tools")
+
+    result = {}
+    for name, version in value.items():
+        if name not in SUPPORTED_TOOLS:
+            fail(f"job {job_name!r}: unsupported tool {name!r}")
+        if not isinstance(version, str) or not TOOL_VERSION_RE.fullmatch(version):
+            fail(f"job {job_name!r}: invalid {name} version")
+        result[name] = version
+    return result
+
+
 def _validate_secrets(value, *, job_name: str):
     names = _validate_string_list(
         value if value is not None else [],
@@ -113,7 +159,13 @@ def _validate_secrets(value, *, job_name: str):
     return names
 
 
-def _normalize_job(name: str, spec: dict, *, allowed_networks: tuple[str, ...]):
+def _normalize_job(
+    name: str,
+    spec: dict,
+    *,
+    allowed_networks: tuple[str, ...],
+    package_manager: str | None,
+):
     if not isinstance(name, str) or not NAME_RE.fullmatch(name):
         fail(f"invalid job name: {name!r}")
     if not isinstance(spec, dict):
@@ -153,6 +205,9 @@ def _normalize_job(name: str, spec: dict, *, allowed_networks: tuple[str, ...]):
     secrets = _validate_secrets(spec.get("secrets"), job_name=name)
     artifacts = _validate_artifacts(spec.get("artifacts"), job_name=name)
     env = _validate_env(spec.get("env"), job_name=name)
+    tools = _validate_tools(
+        spec.get("tools"), job_name=name, package_manager=package_manager
+    )
     overlap = sorted(set(env) & set(secrets))
     if overlap:
         fail(f"job {name!r}: environment and secret names overlap: {', '.join(overlap)}")
@@ -169,6 +224,7 @@ def _normalize_job(name: str, spec: dict, *, allowed_networks: tuple[str, ...]):
         "env": env,
         "secrets": secrets,
         "artifacts": artifacts,
+        "tools": tools,
         mode: execution,
     }
     return normalized
@@ -289,6 +345,7 @@ def load_pipeline_bytes(
     branch: str | None = None,
     default_max_parallel: int = 3,
     allowed_networks=("none", "kiln-ci"),
+    package_manager: str | None = None,
 ) -> dict:
     try:
         data = json.loads(raw.decode("utf-8"))
@@ -311,7 +368,9 @@ def load_pipeline_bytes(
 
     allowed_networks = tuple(allowed_networks)
     jobs = {
-        name: _normalize_job(name, spec, allowed_networks=allowed_networks)
+        name: _normalize_job(
+            name, spec, allowed_networks=allowed_networks, package_manager=package_manager
+        )
         for name, spec in raw_jobs.items()
     }
 
