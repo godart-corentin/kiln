@@ -109,9 +109,25 @@ def classify(config: dict, old_oid: str, new_oid: str, ref: str):
 def atomic_publish(job_id: str, job: dict) -> Path:
     tmp_path = QUEUE_TMP / f".{job_id}.{secrets.token_hex(4)}.tmp"
     final_path = QUEUE_INCOMING / f"{job_id}.json"
+
     fd = None
+    dir_fd = None
+
     try:
-        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
+        # Open the destination directory before publishing anything.
+        # This verifies that the enqueue identity can perform the
+        # directory fsync required after the atomic rename.
+        dir_fd = os.open(
+            QUEUE_INCOMING,
+            os.O_RDONLY | os.O_DIRECTORY,
+        )
+
+        fd = os.open(
+            tmp_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o640,
+        )
+
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             fd = None
             json.dump(job, f, indent=2)
@@ -120,20 +136,21 @@ def atomic_publish(job_id: str, job: dict) -> Path:
             os.fsync(f.fileno())
 
         os.replace(tmp_path, final_path)
-        dir_fd = os.open(QUEUE_INCOMING, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
+        os.fsync(dir_fd)
+
     finally:
         if fd is not None:
             os.close(fd)
+
+        if dir_fd is not None:
+            os.close(dir_fd)
+
         try:
             tmp_path.unlink()
         except FileNotFoundError:
             pass
-    return final_path
 
+    return final_path
 
 def main() -> int:
     if len(sys.argv) != 5:

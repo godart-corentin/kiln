@@ -111,6 +111,7 @@ install -d -o root -g root -m 0755 /usr/local/libexec/kiln /usr/local/libexec/ki
 setfacl -m g:kiln-readers:--x /var/lib/kiln
 setfacl -m g:kiln-readers:r-x,d:g:kiln-readers:r-x /var/lib/kiln/builds
 setfacl -R -m g:kiln-readers:rX /var/lib/kiln/builds
+setfacl -m u:git:rwx /var/lib/kiln/queue/incoming
 find /var/lib/kiln/builds -type d -exec chmod g-s {} +
 
 install -o root -g root -m 0755 "$ROOT_DIR/bin/kiln" /usr/local/bin/kiln
