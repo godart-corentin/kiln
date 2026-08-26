@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "max_parallel": 2,
+  "steps": {
+    "validate": {
+      "stage": "tests",
+      "image": "node:22-bookworm",
+      "network": "kiln-ci",
+      "needs": [],
+      "command": [
+        "sh",
+        "-lc",
+        "corepack pnpm@11.15.1 install --frozen-lockfile && corepack pnpm@11.15.1 test"
+      ]
+    },
+    "package-linux": {
+      "stage": "build",
+      "image": "node:22-bookworm",
+      "network": "kiln-ci",
+      "needs": [
+        "validate"
+      ],
+      "command": [
+        "sh",
+        "-lc",
+        "echo release artifact > /artifacts/example.txt"
+      ]
+    }
+  }
+}

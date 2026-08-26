@@ -99,8 +99,6 @@ config = {
     "schema": 1,
     "project": project,
     "repository": repo,
-    "pipeline": ".kiln/pipeline.json",
-    "ci": {"branches": ["main"]},
     "release": {"tag_pattern": r"^v[0-9]+\.[0-9]+\.[0-9]+$"},
     "runner": runner,
     "discord": {"webhook_file": secret},

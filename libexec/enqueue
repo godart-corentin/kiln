@@ -73,13 +73,23 @@ def load_project(project: str) -> dict:
 
 
 def classify(config: dict, old_oid: str, new_oid: str, ref: str):
+    """Classify a Git ref update without selecting a CI pipeline.
+
+    Branch policy lives in the repository under .kiln/pipelines/*.json.
+    Therefore every non-deletion branch push becomes a lightweight CI job;
+    the controller later selects the single matching branch pipeline from the
+    exact received SHA. A branch with no matching pipeline is silently ignored
+    by the controller.
+
+    Releases remain server-gated: only the initial creation of a matching tag
+    can become a release job.
+    """
+
     if is_zero_oid(new_oid):
         return None
 
     if ref.startswith("refs/heads/"):
-        branch = ref.removeprefix("refs/heads/")
-        branches = config.get("ci", {}).get("branches", [])
-        return "ci" if branch in branches else None
+        return "ci"
 
     if ref.startswith("refs/tags/"):
         tag = ref.removeprefix("refs/tags/")
@@ -164,8 +174,15 @@ def main() -> int:
             "sha": commit_sha,
             "ref": ref,
             "type": job_type,
+            "event": "push" if job_type == "ci" else "tag",
             "pin_ref": pin_ref,
         }
+
+        if job_type == "ci":
+            job["branch"] = ref.removeprefix("refs/heads/")
+        else:
+            job["tag"] = ref.removeprefix("refs/tags/")
+
         atomic_publish(job_id, job)
         published = True
     finally:

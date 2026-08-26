@@ -52,7 +52,8 @@ def main():
             failed = True
             print(f"FAIL bash: {path.relative_to(ROOT)}", file=sys.stderr)
 
-    for path in [ROOT / "config" / "defaults.json", ROOT / "examples" / "pipeline.json"]:
+    json_files = [ROOT / "config" / "defaults.json"] + sorted((ROOT / "examples").glob("*.json"))
+    for path in json_files:
         try:
             json.loads(path.read_text(encoding="utf-8"))
             print(f"OK json:   {path.relative_to(ROOT)}")

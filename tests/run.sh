@@ -12,6 +12,9 @@ python3 \
 python3 \
     "$ROOT_DIR/tests/test_install_web.py"
 
+python3 \
+    "$ROOT_DIR/tests/test_branch_pipelines.py"
+
 
 for unit in \
     "$ROOT_DIR/systemd/kiln-controller.service" \
