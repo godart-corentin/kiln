@@ -202,7 +202,7 @@ def build_input_mounts(input_roots):
 def build_public_env(runtime, job_id, job, input_roots):
     env = {
         "CI": "true",
-        "HOME": "/tmp",
+        "HOME": "/run/kiln/home",
         "KILN_BUILD_ID": runtime["build_id"],
         "KILN_PROJECT": runtime["project"],
         "KILN_SHA": runtime["sha"],
@@ -516,6 +516,7 @@ def main():
                 "--workdir", "/workspace",
                 "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=512m",
                 "--tmpfs", f"/run/kiln/tmp:rw,nosuid,nodev,exec,size=512m,uid={uid},gid={gid},mode=700",
+                "--tmpfs", f"/run/kiln/home:rw,nosuid,nodev,exec,size=512m,uid={uid},gid={gid},mode=700",
                 "--mount", f"type=bind,src={work_dir},dst=/workspace",
                 "--label", f"kiln.build_id={build_id}",
                 "--label", f"kiln.job={job_id}",

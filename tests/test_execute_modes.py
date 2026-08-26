@@ -97,7 +97,7 @@ def test_public_environment_includes_context_declared_env_and_input_paths():
     input_roots = {"package-linux": Path("/tmp/linux")}
     env = execute.build_public_env(runtime, "tests", job, input_roots)
     assert env["CI"] == "true"
-    assert env["HOME"] == "/tmp"
+    assert env["HOME"] == "/run/kiln/home"
     assert env["TMPDIR"] == "/run/kiln/tmp"
     assert env["TMP"] == "/run/kiln/tmp"
     assert env["TEMP"] == "/run/kiln/tmp"
@@ -257,6 +257,11 @@ def test_runner_security_flags_remain_present():
         assert token in text, token
     assert '"--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=512m"' in text
     assert '"--tmpfs", f"/run/kiln/tmp:rw,nosuid,nodev,exec,size=512m,uid={uid},gid={gid},mode=700"' in text
+    assert (
+        '"--tmpfs", '
+        'f"/run/kiln/home:rw,nosuid,nodev,exec,size=512m,uid={uid},gid={gid},mode=700"'
+        in text
+    )
     assert "/var/run/docker.sock" not in text
     assert "--privileged" not in text
 
