@@ -13,6 +13,7 @@ for test in \
     test_web_http.py \
     test_frontend.py \
     test_pipeline.py \
+    test_cache.py \
     test_artifacts.py \
     test_secrets.py \
     test_import_shadowing.py \
