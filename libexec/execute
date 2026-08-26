@@ -13,8 +13,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 BUILDS = Path("/var/lib/kiln/builds")
+CACHE_ROOT = Path("/var/lib/kiln/cache")
 BUILD_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 JOB_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
+TOOL_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
 
 ARTIFACTS_MODULE_PATH = Path(__file__).resolve().with_name("artifacts.py")
 _ARTIFACTS_SPEC = importlib.util.spec_from_file_location("kiln_artifacts", ARTIFACTS_MODULE_PATH)
@@ -139,6 +141,7 @@ def render_tools_wrapper(tools):
 
     return "\n".join(lines)
 
+
 def prepare_tools_wrapper(build_dir, job_id, tools, execution_argv):
     if not tools:
         return [], list(execution_argv)
@@ -187,6 +190,7 @@ def prepare_tools_wrapper(build_dir, job_id, tools, execution_argv):
 
     return mounts, argv
 
+
 def input_env_name(job_id):
     return "KILN_INPUT_" + job_id.upper().replace("-", "_")
 
@@ -197,6 +201,33 @@ def build_input_mounts(input_roots):
         mounts.append(
             f"type=bind,src={root},dst=/run/kiln/inputs/{producer},readonly"
         )
+    return mounts
+
+
+def prepare_cache_mounts(runtime, job):
+    caches = job.get("cache", {})
+    if not caches:
+        return []
+    if not isinstance(caches, dict):
+        fail("invalid runtime cache configuration")
+
+    project = runtime.get("project")
+    if not isinstance(project, str) or not JOB_RE.fullmatch(project):
+        fail("invalid runtime project for cache")
+    job_type = runtime.get("job_type")
+    if job_type not in ("ci", "release"):
+        fail("invalid runtime job type for cache")
+
+    mounts = []
+    for name, version in caches.items():
+        if name != "pnpm":
+            fail(f"unsupported runtime cache {name!r}")
+        if not isinstance(version, str) or not TOOL_VERSION_RE.fullmatch(version):
+            fail(f"invalid runtime cache version for {name!r}")
+        root = CACHE_ROOT / project / job_type / name / version
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        root.chmod(0o700)
+        mounts.append(f"type=bind,src={root},dst=/run/kiln/cache/{name}")
     return mounts
 
 
@@ -218,6 +249,8 @@ def build_public_env(runtime, job_id, job, input_roots):
     if tag:
         env["KILN_TAG"] = tag
     env.update(job.get("env", {}))
+    if "pnpm" in job.get("cache", {}):
+        env["npm_config_store_dir"] = "/run/kiln/cache/pnpm"
     env.setdefault("XDG_RUNTIME_DIR", "/run/kiln/tmp")
     env.setdefault("TMPDIR", "/run/kiln/tmp")
     env.setdefault("TMP", "/run/kiln/tmp")
@@ -468,6 +501,7 @@ def main():
             f"image: {job['image']}\n"
             f"network: {job['network']}\n"
             f"tools: {', '.join(f'{name}={version}' for name, version in job.get('tools', {}).items()) or 'none'}\n"
+            f"cache: {', '.join(f'{name}={version}' for name, version in job.get('cache', {}).items()) or 'none'}\n"
             f"limits: cpus={runner['cpus']} memory={runner['memory']} "
             f"pids={runner['pids_limit']} timeout={runner['timeout_seconds']}s\n\n"
         )
@@ -503,6 +537,7 @@ def main():
         if error is None and input_roots is not None:
             extra_mounts, execution_argv = prepare_execution(build_dir, job_id, job)
             extra_mounts.extend(build_input_mounts(input_roots))
+            extra_mounts.extend(prepare_cache_mounts(runtime, job))
             if secret_stage is not None:
                 extra_mounts.append(
                     f"type=bind,src={secret_stage},dst=/run/kiln/secrets,readonly"
