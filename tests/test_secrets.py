@@ -8,8 +8,8 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SECRETS_MODULE = ROOT / "libexec" / "kiln_secrets.py"
-CLI_PATH = ROOT / "bin" / "kiln"
+SECRETS_MODULE = ROOT / "libexec" / "kilnr_secrets.py"
+CLI_PATH = ROOT / "bin" / "kilnr"
 
 
 def load_module(path, name):
@@ -25,8 +25,8 @@ def load_module(path, name):
     return module
 
 
-secrets = load_module(SECRETS_MODULE, "kiln_secrets_test")
-cli = load_module(CLI_PATH, "kiln_cli_secrets_test")
+secrets = load_module(SECRETS_MODULE, "kilnr_secrets_test")
+cli = load_module(CLI_PATH, "kilnr_cli_secrets_test")
 
 
 def test_store_list_load_and_delete_secret():
@@ -61,7 +61,7 @@ def test_text_secret_rejects_nul_and_names_are_strict():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "demo").mkdir()
-        for bad_name in ("bad-name", "lower", "KILN_SHA"):
+        for bad_name in ("bad-name", "lower", "KILNR_SHA"):
             try:
                 secrets.store_secret(root, "demo", bad_name, b"x", kind="text", scope="release")
             except secrets.SecretError:
@@ -119,10 +119,10 @@ def test_cli_usage_lists_secret_commands():
     with contextlib.redirect_stderr(stream):
         cli.usage()
     text = stream.getvalue()
-    assert "kiln secret set <project> <name>" in text
-    assert "kiln secret set-file <project> <name> <path>" in text
-    assert "kiln secret list <project>" in text
-    assert "kiln secret delete <project> <name>" in text
+    assert "kilnr secret set <project> <name>" in text
+    assert "kilnr secret set-file <project> <name> <path>" in text
+    assert "kilnr secret list <project>" in text
+    assert "kilnr secret delete <project> <name>" in text
 
 
 
@@ -131,15 +131,15 @@ def test_install_and_project_lifecycle_wire_secret_storage():
     create = (ROOT / "libexec" / "project-create").read_text(encoding="utf-8")
     delete = (ROOT / "libexec" / "project-delete").read_text(encoding="utf-8")
     uninstall = (ROOT / "uninstall.sh").read_text(encoding="utf-8")
-    assert "/var/lib/kiln/secret-staging" in install
-    assert 'for project_config in /etc/kiln/projects/*.json' in install
+    assert "/var/lib/kilnr/secret-staging" in install
+    assert 'for project_config in /etc/kilnr/projects/*.json' in install
     for name in ("secret-set", "secret-set-file", "secret-list", "secret-delete"):
         assert name in install
     assert 'secret_dir="${SECRETS_ROOT}/${project}"' in create
-    assert 'install -d -o root -g kiln -m 0750 "$secret_dir"' in create
+    assert 'install -d -o root -g kilnr -m 0750 "$secret_dir"' in create
     assert 'secret_dir = SECRETS_ROOT / project' in delete
     assert 'shutil.rmtree(secret_dir)' in delete
-    assert 'rm -rf /var/lib/kiln/secret-staging' in uninstall
+    assert 'rm -rf /var/lib/kilnr/secret-staging' in uninstall
 
 def main():
     tests = [

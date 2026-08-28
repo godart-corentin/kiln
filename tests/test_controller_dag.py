@@ -18,8 +18,8 @@ def load_script(name, path):
     return module
 
 
-controller = load_script("kiln_controller_dag_test", CONTROLLER_PATH)
-pipeline_schema = load_script("kiln_pipeline_dag_test", PIPELINE_PATH)
+controller = load_script("kilnr_controller_dag_test", CONTROLLER_PATH)
+pipeline_schema = load_script("kilnr_pipeline_dag_test", PIPELINE_PATH)
 
 
 def job():
@@ -35,7 +35,7 @@ def job():
         "type": "ci",
         "event": "push",
         "branch": "main",
-        "pin_ref": "refs/kiln/jobs/20260826T000000000000Z-demo-abcdef0-12345678",
+        "pin_ref": "refs/kilnr/jobs/20260826T000000000000Z-demo-abcdef0-12345678",
     }
 
 
@@ -47,7 +47,7 @@ def config(max_parallel=3):
             "memory": "768m",
             "pids_limit": 256,
             "timeout_seconds": 1800,
-            "allowed_networks": ["none", "kiln-ci"],
+            "allowed_networks": ["none", "kilnr-ci"],
         }
     }
 
@@ -86,13 +86,13 @@ def normalized_pipeline(requested=4):
         kind="ci",
         branch="main",
         default_max_parallel=3,
-        allowed_networks=("none", "kiln-ci"),
+        allowed_networks=("none", "kilnr-ci"),
     )
 
 
 def test_runtime_uses_jobs_and_caps_parallelism():
     runtime = controller.resolve_pipeline(
-        job(), config(max_parallel=3), normalized_pipeline(requested=8), ".kiln/pipelines/ci.json"
+        job(), config(max_parallel=3), normalized_pipeline(requested=8), ".kilnr/pipelines/ci.json"
     )
     assert "jobs" in runtime
     assert "steps" not in runtime
@@ -104,7 +104,7 @@ def test_runtime_uses_jobs_and_caps_parallelism():
 
 def test_makefile_uses_resolved_job_dependencies_without_group_targets():
     runtime = controller.resolve_pipeline(
-        job(), config(max_parallel=4), normalized_pipeline(requested=4), ".kiln/pipelines/ci.json"
+        job(), config(max_parallel=4), normalized_pipeline(requested=4), ".kilnr/pipelines/ci.json"
     )
     with tempfile.TemporaryDirectory() as tmp:
         build_dir = Path(tmp)
@@ -114,24 +114,24 @@ def test_makefile_uses_resolved_job_dependencies_without_group_targets():
     assert "job-build: job-lint job-tests" in text
     assert "job-package: job-build" in text
     assert "job-quality:" not in text
-    assert "/usr/local/libexec/kiln/execute" in text
+    assert "/usr/local/libexec/kilnr/execute" in text
     assert runtime["build_id"] in text
 
 
 
 def test_status_contains_resolved_pipeline_jobs():
     runtime = controller.resolve_pipeline(
-        job(), config(max_parallel=4), normalized_pipeline(requested=4), ".kiln/pipelines/ci.json"
+        job(), config(max_parallel=4), normalized_pipeline(requested=4), ".kilnr/pipelines/ci.json"
     )
     with tempfile.TemporaryDirectory() as tmp:
         build_dir = Path(tmp)
         (build_dir / "logs").mkdir()
-        status = controller.initial_status(job(), ".kiln/pipelines/ci.json")
+        status = controller.initial_status(job(), ".kilnr/pipelines/ci.json")
         controller.write_json(build_dir / "status.json", status)
         controller.start_pipeline_status(build_dir, status, runtime)
         stored = controller.read_json(build_dir / "status.json")
 
-    assert stored["pipeline_path"] == ".kiln/pipelines/ci.json"
+    assert stored["pipeline_path"] == ".kilnr/pipelines/ci.json"
     assert stored["prepare"]["state"] == "success"
     assert stored["pipeline"]["groups"] == {"quality": ["lint", "tests"], "build-group": ["build"]}
     assert stored["pipeline"]["jobs"]["build"]["needs"] == ["quality"]
@@ -142,12 +142,12 @@ def test_status_contains_resolved_pipeline_jobs():
 
 def test_finalize_marks_pending_jobs_skipped():
     runtime = controller.resolve_pipeline(
-        job(), config(max_parallel=4), normalized_pipeline(requested=4), ".kiln/pipelines/ci.json"
+        job(), config(max_parallel=4), normalized_pipeline(requested=4), ".kilnr/pipelines/ci.json"
     )
     with tempfile.TemporaryDirectory() as tmp:
         build_dir = Path(tmp)
         (build_dir / "logs").mkdir()
-        status = controller.initial_status(job(), ".kiln/pipelines/ci.json")
+        status = controller.initial_status(job(), ".kilnr/pipelines/ci.json")
         controller.write_json(build_dir / "status.json", status)
         controller.start_pipeline_status(build_dir, status, runtime)
         stored = controller.read_json(build_dir / "status.json")
@@ -186,7 +186,7 @@ def test_release_pipeline_secrets_are_validated_before_runtime():
         kind="release",
         branch=None,
         default_max_parallel=3,
-        allowed_networks=("none", "kiln-ci"),
+        allowed_networks=("none", "kilnr-ci"),
     )
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -199,7 +199,7 @@ def test_release_pipeline_secrets_are_validated_before_runtime():
                 kind="text", scope="release"
             )
             runtime = controller.resolve_pipeline(
-                release_job, config(), pipeline, ".kiln/release.json"
+                release_job, config(), pipeline, ".kilnr/release.json"
             )
         finally:
             controller.SECRETS_ROOT = old_root
@@ -222,7 +222,7 @@ def test_missing_release_secret_fails_before_execution():
     }
     pipeline = pipeline_schema.load_pipeline_bytes(
         json.dumps(raw).encode(), kind="release", branch=None,
-        default_max_parallel=3, allowed_networks=("none", "kiln-ci")
+        default_max_parallel=3, allowed_networks=("none", "kilnr-ci")
     )
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -231,8 +231,8 @@ def test_missing_release_secret_fails_before_execution():
         try:
             controller.SECRETS_ROOT = root
             try:
-                controller.resolve_pipeline(release_job, config(), pipeline, ".kiln/release.json")
-            except controller.KilnError as exc:
+                controller.resolve_pipeline(release_job, config(), pipeline, ".kilnr/release.json")
+            except controller.KilnrError as exc:
                 assert "APPLE_ID" in str(exc)
             else:
                 raise AssertionError("expected missing secret to fail")

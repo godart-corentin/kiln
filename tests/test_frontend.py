@@ -41,7 +41,7 @@ if "resolved_needs" not in graph:
 if ".needs" in graph:
     fail("PipelineGraph must not resolve raw needs")
 
-server = (ROOT / "web" / "server" / "kiln_web.py").read_text(encoding="utf-8")
+server = (ROOT / "web" / "server" / "kilnr_web.py").read_text(encoding="utf-8")
 if "text/event-stream" not in server:
     fail("web backend must expose SSE")
 if "STATIC_ROOT" not in server:
@@ -53,18 +53,18 @@ if "FROM node:22-alpine AS frontend" not in dockerfile:
     fail("frontend must build in a Node stage")
 if "FROM python:3.12-alpine" not in dockerfile:
     fail("runtime image must be Python-only")
-if "COPY --from=frontend /src/dist /opt/kiln/static" not in dockerfile:
+if "COPY --from=frontend /src/dist /opt/kilnr/static" not in dockerfile:
     fail("runtime image must contain the Vite build")
 
 install = (ROOT / "install.sh").read_text(encoding="utf-8")
-if "/usr/local/share/kiln/web-src" not in install:
+if "/usr/local/share/kilnr/web-src" not in install:
     fail("install.sh must stage web build sources for update.sh")
 
 
 update = (ROOT / "update.sh").read_text(encoding="utf-8")
-if "up -d --build kiln-web" not in update:
+if "up -d --build kilnr-web" not in update:
     fail("update.sh must rebuild an already-migrated React web image")
-if "docker restart kiln-web" in update:
+if "docker restart kilnr-web" in update:
     fail("update.sh must not restart the legacy web container before React migration")
 
 print("OK frontend: React routes, DAG, and live logs are wired")

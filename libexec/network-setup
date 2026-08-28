@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-CONFIG="/etc/kiln/network.env"
+CONFIG="/etc/kilnr/network.env"
 
 die() {
-    echo "kiln network: $*" >&2
+    echo "kilnr network: $*" >&2
     exit 1
 }
 
@@ -22,7 +22,7 @@ source "$CONFIG"
 command -v docker >/dev/null || die "docker not found"
 command -v iptables >/dev/null || die "iptables not found"
 
-iptables -S DOCKER-USER >/dev/null 2>&1     || die "Docker DOCKER-USER chain is unavailable; Kiln currently requires Docker's iptables firewall backend"
+iptables -S DOCKER-USER >/dev/null 2>&1     || die "Docker DOCKER-USER chain is unavailable; Kilnr currently requires Docker's iptables firewall backend"
 
 if ! docker network inspect "$NETWORK" >/dev/null 2>&1; then
     docker network create \
@@ -49,8 +49,8 @@ actual_bridge="$(
 [[ "$actual_bridge" == "$BRIDGE" ]] \
     || die "unexpected bridge for $NETWORK: $actual_bridge"
 
-iptables -N KILN-CI-EGRESS 2>/dev/null || true
-iptables -F KILN-CI-EGRESS
+iptables -N KILNR-CI-EGRESS 2>/dev/null || true
+iptables -F KILNR-CI-EGRESS
 
 for destination in \
     0.0.0.0/8 \
@@ -65,28 +65,28 @@ for destination in \
     240.0.0.0/4
 do
     iptables \
-        -A KILN-CI-EGRESS \
+        -A KILNR-CI-EGRESS \
         -d "$destination" \
         -j REJECT \
         --reject-with icmp-net-unreachable
 done
 
-iptables -A KILN-CI-EGRESS -j RETURN
+iptables -A KILNR-CI-EGRESS -j RETURN
 
 iptables \
     -C DOCKER-USER \
     -i "$BRIDGE" \
-    -j KILN-CI-EGRESS \
+    -j KILNR-CI-EGRESS \
     2>/dev/null \
 || iptables \
     -I DOCKER-USER 1 \
     -i "$BRIDGE" \
-    -j KILN-CI-EGRESS
+    -j KILNR-CI-EGRESS
 
-iptables -N KILN-CI-HOST 2>/dev/null || true
-iptables -F KILN-CI-HOST
+iptables -N KILNR-CI-HOST 2>/dev/null || true
+iptables -F KILNR-CI-HOST
 iptables \
-    -A KILN-CI-HOST \
+    -A KILNR-CI-HOST \
     -j REJECT \
     --reject-with icmp-port-unreachable
 
@@ -94,12 +94,12 @@ iptables \
     -C INPUT \
     -i "$BRIDGE" \
     -s "$SUBNET" \
-    -j KILN-CI-HOST \
+    -j KILNR-CI-HOST \
     2>/dev/null \
 || iptables \
     -I INPUT 1 \
     -i "$BRIDGE" \
     -s "$SUBNET" \
-    -j KILN-CI-HOST
+    -j KILNR-CI-HOST
 
-echo "kiln network: ready ($NETWORK $SUBNET)"
+echo "kilnr network: ready ($NETWORK $SUBNET)"

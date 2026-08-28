@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-CONFIG="/etc/kiln/network.env"
+CONFIG="/etc/kilnr/network.env"
 
 if [[ "${EUID}" -ne 0 ]]; then
-    echo "kiln network teardown: must run as root" >&2
+    echo "kilnr network teardown: must run as root" >&2
     exit 1
 fi
 
@@ -12,23 +12,23 @@ if [[ -f "$CONFIG" ]]; then
     # shellcheck disable=SC1090
     source "$CONFIG"
 else
-    NETWORK="kiln-ci"
-    BRIDGE="kiln0"
+    NETWORK="kilnr-ci"
+    BRIDGE="kilnr0"
     SUBNET="172.30.0.0/24"
 fi
 
-while iptables -C DOCKER-USER -i "$BRIDGE" -j KILN-CI-EGRESS 2>/dev/null; do
-    iptables -D DOCKER-USER -i "$BRIDGE" -j KILN-CI-EGRESS || true
+while iptables -C DOCKER-USER -i "$BRIDGE" -j KILNR-CI-EGRESS 2>/dev/null; do
+    iptables -D DOCKER-USER -i "$BRIDGE" -j KILNR-CI-EGRESS || true
 done
 
-while iptables -C INPUT -i "$BRIDGE" -s "$SUBNET" -j KILN-CI-HOST 2>/dev/null; do
-    iptables -D INPUT -i "$BRIDGE" -s "$SUBNET" -j KILN-CI-HOST || true
+while iptables -C INPUT -i "$BRIDGE" -s "$SUBNET" -j KILNR-CI-HOST 2>/dev/null; do
+    iptables -D INPUT -i "$BRIDGE" -s "$SUBNET" -j KILNR-CI-HOST || true
 done
 
-iptables -F KILN-CI-EGRESS 2>/dev/null || true
-iptables -X KILN-CI-EGRESS 2>/dev/null || true
-iptables -F KILN-CI-HOST 2>/dev/null || true
-iptables -X KILN-CI-HOST 2>/dev/null || true
+iptables -F KILNR-CI-EGRESS 2>/dev/null || true
+iptables -X KILNR-CI-EGRESS 2>/dev/null || true
+iptables -F KILNR-CI-HOST 2>/dev/null || true
+iptables -X KILNR-CI-HOST 2>/dev/null || true
 
 docker network rm "$NETWORK" >/dev/null 2>&1 || true
-echo "kiln network: removed"
+echo "kilnr network: removed"

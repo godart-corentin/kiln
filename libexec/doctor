@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 if [[ "${EUID}" -ne 0 ]]; then
-    echo "kiln doctor: must run as root" >&2
+    echo "kilnr doctor: must run as root" >&2
     exit 1
 fi
 
@@ -35,8 +35,8 @@ done
 
 for user in \
     git \
-    kiln \
-    kiln-web
+    kilnr \
+    kilnr-web
 do
     check \
         "user ${user}" \
@@ -44,8 +44,8 @@ do
 done
 
 for group in \
-    kiln-submit \
-    kiln-readers
+    kilnr-submit \
+    kilnr-readers
 do
     check \
         "group ${group}" \
@@ -54,14 +54,14 @@ done
 
 for path in \
     /srv/git \
-    /var/lib/kiln/queue/incoming \
-    /var/lib/kiln/queue/running \
-    /var/lib/kiln/builds \
-    /var/lib/kiln/secret-staging \
-    /var/lib/kiln/job-runtime \
-    /etc/kiln/projects \
-    /etc/kiln/secrets \
-    /usr/local/libexec/kiln/controller
+    /var/lib/kilnr/queue/incoming \
+    /var/lib/kilnr/queue/running \
+    /var/lib/kilnr/builds \
+    /var/lib/kilnr/secret-staging \
+    /var/lib/kilnr/job-runtime \
+    /etc/kilnr/projects \
+    /etc/kilnr/secrets \
+    /usr/local/libexec/kilnr/controller
 do
     check \
         "$path" \
@@ -69,33 +69,33 @@ do
 done
 
 check \
-    "kiln-queue.path active" \
-    systemctl is-active --quiet kiln-queue.path
+    "kilnr-queue.path active" \
+    systemctl is-active --quiet kilnr-queue.path
 
 check \
-    "kiln-network.service active" \
-    systemctl is-active --quiet kiln-network.service
+    "kilnr-network.service active" \
+    systemctl is-active --quiet kilnr-network.service
 
 check \
-    "Docker network kiln-ci" \
-    docker network inspect kiln-ci
+    "Docker network kilnr-ci" \
+    docker network inspect kilnr-ci
 
 check \
-    "Kiln controller executable" \
-    test -x /usr/local/libexec/kiln/controller
+    "Kilnr controller executable" \
+    test -x /usr/local/libexec/kilnr/controller
 
 check \
-    "Kiln execute executable" \
-    test -x /usr/local/libexec/kiln/execute
+    "Kilnr execute executable" \
+    test -x /usr/local/libexec/kilnr/execute
 
 check \
-    "Kiln enqueue executable" \
-    test -x /usr/local/libexec/kiln/enqueue
+    "Kilnr enqueue executable" \
+    test -x /usr/local/libexec/kilnr/enqueue
 
 for helper in secret-set secret-set-file secret-list secret-delete; do
     check \
-        "Kiln ${helper} executable" \
-        test -x "/usr/local/libexec/kiln/${helper}"
+        "Kilnr ${helper} executable" \
+        test -x "/usr/local/libexec/kilnr/${helper}"
 done
 
 exit "$failed"

@@ -2,13 +2,13 @@
 set -Eeuo pipefail
 
 GIT_ROOT="/srv/git"
-CONFIG_ROOT="/etc/kiln/projects"
-SECRETS_ROOT="/etc/kiln/secrets"
-DEFAULTS="/etc/kiln/defaults.json"
-HOOK_SOURCE="/usr/local/libexec/kiln/git-hooks/post-receive"
+CONFIG_ROOT="/etc/kilnr/projects"
+SECRETS_ROOT="/etc/kilnr/secrets"
+DEFAULTS="/etc/kilnr/defaults.json"
+HOOK_SOURCE="/usr/local/libexec/kilnr/git-hooks/post-receive"
 
 die() {
-    echo "kiln project create: $*" >&2
+    echo "kilnr project create: $*" >&2
     exit 1
 }
 
@@ -25,7 +25,7 @@ secret="${SECRETS_ROOT}/${project}.discord-webhook"
 secret_dir="${SECRETS_ROOT}/${project}"
 
 getent passwd git >/dev/null || die "Linux user 'git' does not exist"
-getent passwd kiln >/dev/null || die "Linux user 'kiln' does not exist"
+getent passwd kilnr >/dev/null || die "Linux user 'kilnr' does not exist"
 command -v git >/dev/null || die "git is not installed"
 command -v runuser >/dev/null || die "runuser is unavailable"
 command -v setfacl >/dev/null || die "setfacl is unavailable (install package acl)"
@@ -33,12 +33,12 @@ command -v setfacl >/dev/null || die "setfacl is unavailable (install package ac
 [[ -d "$CONFIG_ROOT" ]] || die "$CONFIG_ROOT does not exist"
 [[ -d "$SECRETS_ROOT" ]] || die "$SECRETS_ROOT does not exist"
 [[ -f "$DEFAULTS" ]] || die "$DEFAULTS does not exist"
-[[ -f "$HOOK_SOURCE" && -x "$HOOK_SOURCE" ]] || die "Kiln post-receive hook is missing"
+[[ -f "$HOOK_SOURCE" && -x "$HOOK_SOURCE" ]] || die "Kilnr post-receive hook is missing"
 [[ "$(stat -c '%U:%G' "$HOOK_SOURCE")" == "root:root" ]] \
-    || die "Kiln post-receive hook must be root:root"
+    || die "Kilnr post-receive hook must be root:root"
 
 if find "$HOOK_SOURCE" -perm /022 -print -quit | grep -q .; then
-    die "Kiln post-receive hook must not be writable by group/others"
+    die "Kilnr post-receive hook must not be writable by group/others"
 fi
 
 [[ ! -e "$repo" ]] || die "repository already exists: $repo"
@@ -55,7 +55,7 @@ tmp_config=""
 cleanup_on_error() {
     rc=$?
     if [[ "$rc" -ne 0 ]]; then
-        echo "kiln project create: creation failed; cleaning partial state" >&2
+        echo "kilnr project create: creation failed; cleaning partial state" >&2
         [[ -n "$tmp_config" ]] && rm -f -- "$tmp_config"
         [[ "$created_config" -eq 1 ]] && rm -f -- "$config"
         [[ "$created_secret" -eq 1 ]] && rm -f -- "$secret"
@@ -66,7 +66,7 @@ cleanup_on_error() {
 }
 trap cleanup_on_error EXIT
 
-echo "Creating Kiln project: $project"
+echo "Creating Kilnr project: $project"
 
 install -d -o git -g git -m 0750 "$repo"
 created_repo=1
@@ -74,16 +74,16 @@ created_repo=1
 runuser -u git -- env GIT_CONFIG_NOSYSTEM=1 \
     git init --bare --initial-branch=main "$repo" >/dev/null
 
-runuser -u git -- git --git-dir="$repo" config transfer.hideRefs refs/kiln/
+runuser -u git -- git --git-dir="$repo" config transfer.hideRefs refs/kilnr/
 runuser -u git -- git --git-dir="$repo" config gc.packRefs false
 
 # Read-only repository access for the controller.
-setfacl -R -m u:kiln:rX "$repo"
-find "$repo" -type d -exec setfacl -m d:u:kiln:r-x {} +
+setfacl -R -m u:kilnr:rX "$repo"
+find "$repo" -type d -exec setfacl -m d:u:kilnr:r-x {} +
 
-# The only Git namespace writable by kiln.
-install -d -o git -g git -m 0750 "$repo/refs/kiln" "$repo/refs/kiln/jobs"
-setfacl -m u:kiln:rwx,d:u:kiln:rwx "$repo/refs/kiln" "$repo/refs/kiln/jobs"
+# The only Git namespace writable by kilnr.
+install -d -o git -g git -m 0750 "$repo/refs/kilnr" "$repo/refs/kilnr/jobs"
+setfacl -m u:kilnr:rwx,d:u:kilnr:rwx "$repo/refs/kilnr" "$repo/refs/kilnr/jobs"
 
 ln -s "$HOOK_SOURCE" "$repo/hooks/post-receive"
 
@@ -97,7 +97,7 @@ project, repo, secret, defaults_path = sys.argv[1:]
 defaults = json.loads(Path(defaults_path).read_text(encoding="utf-8"))
 runner = defaults.get("runner")
 if not isinstance(runner, dict):
-    raise SystemExit("invalid /etc/kiln/defaults.json: runner missing")
+    raise SystemExit("invalid /etc/kilnr/defaults.json: runner missing")
 
 config = {
     "schema": 1,
@@ -116,25 +116,25 @@ mv -- "$tmp_config" "$config"
 tmp_config=""
 created_config=1
 
-install -d -o root -g kiln -m 0750 "$secret_dir"
+install -d -o root -g kilnr -m 0750 "$secret_dir"
 created_secret_dir=1
-install -o root -g kiln -m 0640 /dev/null "$secret"
+install -o root -g kilnr -m 0640 /dev/null "$secret"
 created_secret=1
 
 [[ "$(runuser -u git -- git --git-dir="$repo" rev-parse --is-bare-repository)" == "true" ]] \
     || die "bare repository validation failed"
-[[ "$(runuser -u git -- git --git-dir="$repo" config --get transfer.hideRefs)" == "refs/kiln/" ]] \
+[[ "$(runuser -u git -- git --git-dir="$repo" config --get transfer.hideRefs)" == "refs/kilnr/" ]] \
     || die "transfer.hideRefs validation failed"
 [[ "$(runuser -u git -- git --git-dir="$repo" config --get gc.packRefs)" == "false" ]] \
     || die "gc.packRefs validation failed"
 [[ "$(readlink -f "$repo/hooks/post-receive")" == "$HOOK_SOURCE" ]] \
     || die "post-receive hook validation failed"
 
-if runuser -u kiln -- test -w "$repo/refs/heads"; then
-    die "security check failed: kiln can write refs/heads"
+if runuser -u kilnr -- test -w "$repo/refs/heads"; then
+    die "security check failed: kilnr can write refs/heads"
 fi
-runuser -u kiln -- test -w "$repo/refs/kiln/jobs" \
-    || die "security check failed: kiln cannot write refs/kiln/jobs"
+runuser -u kilnr -- test -w "$repo/refs/kilnr/jobs" \
+    || die "security check failed: kilnr cannot write refs/kilnr/jobs"
 
 trap - EXIT
 
@@ -152,4 +152,4 @@ echo "  git remote add home git@${server}:${repo}"
 echo "  git push home main"
 echo
 echo "Optional Discord webhook:"
-echo "  kiln project webhook set ${project}"
+echo "  kilnr project webhook set ${project}"

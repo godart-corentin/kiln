@@ -8,17 +8,17 @@ import sys
 import time
 from pathlib import Path
 
-BUILDS = Path("/var/lib/kiln/builds")
-PROJECT_CREATE = "/usr/local/libexec/kiln/project-create"
-PROJECT_DELETE = "/usr/local/libexec/kiln/project-delete"
-PROJECT_WEBHOOK_SET = "/usr/local/libexec/kiln/project-webhook-set"
-RERUN = "/usr/local/libexec/kiln/rerun"
-GIT_KEY_ADD = "/usr/local/libexec/kiln/git-key-add"
-DOCTOR = "/usr/local/libexec/kiln/doctor"
-SECRET_SET = "/usr/local/libexec/kiln/secret-set"
-SECRET_SET_FILE = "/usr/local/libexec/kiln/secret-set-file"
-SECRET_LIST = "/usr/local/libexec/kiln/secret-list"
-SECRET_DELETE = "/usr/local/libexec/kiln/secret-delete"
+BUILDS = Path("/var/lib/kilnr/builds")
+PROJECT_CREATE = "/usr/local/libexec/kilnr/project-create"
+PROJECT_DELETE = "/usr/local/libexec/kilnr/project-delete"
+PROJECT_WEBHOOK_SET = "/usr/local/libexec/kilnr/project-webhook-set"
+RERUN = "/usr/local/libexec/kilnr/rerun"
+GIT_KEY_ADD = "/usr/local/libexec/kilnr/git-key-add"
+DOCTOR = "/usr/local/libexec/kilnr/doctor"
+SECRET_SET = "/usr/local/libexec/kilnr/secret-set"
+SECRET_SET_FILE = "/usr/local/libexec/kilnr/secret-set-file"
+SECRET_LIST = "/usr/local/libexec/kilnr/secret-list"
+SECRET_DELETE = "/usr/local/libexec/kilnr/secret-delete"
 
 LOG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 FINAL_BUILD_STATES = {"success", "failed", "aborted"}
@@ -177,7 +177,7 @@ def watch_log(build, target):
                 except FileNotFoundError:
                     state = terminal_state(build, target)
                     if state is not None:
-                        print(f"kiln: {target}: {state}", file=sys.stderr)
+                        print(f"kilnr: {target}: {state}", file=sys.stderr)
                         return 0 if state == "success" else 1
                     time.sleep(0.25)
                     continue
@@ -205,7 +205,7 @@ def watch_log(build, target):
                 if chunk:
                     sys.stdout.write(chunk)
                     sys.stdout.flush()
-                print(f"\nkiln: {target}: {state}", file=sys.stderr)
+                print(f"\nkilnr: {target}: {state}", file=sys.stderr)
                 return 0 if state == "success" else 1
             time.sleep(0.25)
     finally:
@@ -220,12 +220,12 @@ def privileged_command(helper, *args, stdin_text=None):
 
 def project_delete(project):
     print(
-        f"This will permanently delete the Git repository and Kiln configuration for '{project}'."
+        f"This will permanently delete the Git repository and Kilnr configuration for '{project}'."
     )
     print("Existing build history, logs and artifacts will be preserved.")
     confirmation = input(f"Type '{project}' to confirm: ").strip()
     if confirmation != project:
-        print("kiln: deletion cancelled", file=sys.stderr)
+        print("kilnr: deletion cancelled", file=sys.stderr)
         return 1
     return privileged_command(PROJECT_DELETE, project)
 
@@ -233,7 +233,7 @@ def project_delete(project):
 def project_webhook_set(project):
     webhook = getpass.getpass("Discord webhook URL: ").strip()
     if not webhook:
-        print("kiln: webhook cannot be empty", file=sys.stderr)
+        print("kilnr: webhook cannot be empty", file=sys.stderr)
         return 1
     return privileged_command(PROJECT_WEBHOOK_SET, project, stdin_text=webhook + "\n")
 
@@ -252,7 +252,7 @@ def git_key_add():
     print("Paste one Ed25519 SSH public key:")
     key = input().strip()
     if not key:
-        print("kiln: key cannot be empty", file=sys.stderr)
+        print("kilnr: key cannot be empty", file=sys.stderr)
         return 1
     return privileged_command(GIT_KEY_ADD, stdin_text=key + "\n")
 
@@ -266,7 +266,7 @@ def doctor():
 def secret_set(project, name):
     value = getpass.getpass("Secret value: ")
     if not value:
-        print("kiln: secret cannot be empty", file=sys.stderr)
+        print("kilnr: secret cannot be empty", file=sys.stderr)
         return 1
     return privileged_command(SECRET_SET, project, name, stdin_text=value)
 
@@ -274,7 +274,7 @@ def secret_set(project, name):
 def secret_set_file(project, name, path):
     source = Path(path).expanduser().resolve()
     if not source.is_file():
-        print(f"kiln: secret file not found: {source}", file=sys.stderr)
+        print(f"kilnr: secret file not found: {source}", file=sys.stderr)
         return 1
     return privileged_command(SECRET_SET_FILE, project, name, str(source))
 
@@ -290,22 +290,22 @@ def secret_delete(project, name):
 def usage():
     print(
         """Usage:
-  kiln status <latest|build-id|sha-prefix>
-  kiln logs <latest|build-id|sha-prefix> [job]
-  kiln watch <latest|build-id|sha-prefix> <job|pipeline>
-  kiln rerun <latest|build-id|sha-prefix>
-  kiln doctor
+  kilnr status <latest|build-id|sha-prefix>
+  kilnr logs <latest|build-id|sha-prefix> [job]
+  kilnr watch <latest|build-id|sha-prefix> <job|pipeline>
+  kilnr rerun <latest|build-id|sha-prefix>
+  kilnr doctor
 
-  kiln project create <project-name>
-  kiln project delete <project-name>
-  kiln project webhook set <project-name>
+  kilnr project create <project-name>
+  kilnr project delete <project-name>
+  kilnr project webhook set <project-name>
 
-  kiln secret set <project> <name>
-  kiln secret set-file <project> <name> <path>
-  kiln secret list <project>
-  kiln secret delete <project> <name>
+  kilnr secret set <project> <name>
+  kilnr secret set-file <project> <name> <path>
+  kilnr secret list <project>
+  kilnr secret delete <project> <name>
 
-  kiln git-key add
+  kilnr git-key add
 """,
         file=sys.stderr,
     )
@@ -351,11 +351,11 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except PermissionError:
-        print("kiln: permission denied; check kiln-readers membership", file=sys.stderr)
+        print("kilnr: permission denied; check kilnr-readers membership", file=sys.stderr)
         sys.exit(1)
     except RuntimeError as exc:
-        print(f"kiln: {exc}", file=sys.stderr)
+        print(f"kilnr: {exc}", file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
-        print("\nkiln: stopped", file=sys.stderr)
+        print("\nkilnr: stopped", file=sys.stderr)
         sys.exit(130)

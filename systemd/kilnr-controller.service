@@ -1,17 +1,17 @@
 [Unit]
-Description=Kiln CI controller
+Description=Kilnr CI controller
 Requires=docker.service
-After=docker.service kiln-network.service
-Wants=kiln-network.service
+After=docker.service kilnr-network.service
+Wants=kilnr-network.service
 
 [Service]
 Type=oneshot
-User=kiln
-Group=kiln
+User=kilnr
+Group=kilnr
 SupplementaryGroups=docker
-WorkingDirectory=/var/lib/kiln
-Environment=HOME=/var/lib/kiln
-ExecStart=/usr/local/libexec/kiln/controller
+WorkingDirectory=/var/lib/kilnr
+Environment=HOME=/var/lib/kilnr
+ExecStart=/usr/local/libexec/kilnr/controller
 UMask=0027
 TimeoutStartSec=infinity
 TimeoutStopSec=30s
@@ -21,7 +21,7 @@ PrivateTmp=yes
 PrivateDevices=yes
 ProtectHome=yes
 ProtectSystem=strict
-ReadWritePaths=/var/lib/kiln
+ReadWritePaths=/var/lib/kilnr
 ReadWritePaths=/srv/git
 ProtectKernelTunables=yes
 ProtectKernelModules=yes

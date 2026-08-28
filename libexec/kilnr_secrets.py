@@ -27,7 +27,7 @@ def validate_secret_name(name: str) -> str:
     if (
         not isinstance(name, str)
         or not SECRET_RE.fullmatch(name)
-        or name.startswith("KILN_")
+        or name.startswith("KILNR_")
     ):
         fail(f"invalid secret name: {name!r}")
     return name

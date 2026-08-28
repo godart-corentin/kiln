@@ -24,7 +24,7 @@ assert open_pos < replace_pos < fsync_pos, (
 
 # git needs read/write/traverse on incoming because enqueue opens
 # the directory O_RDONLY before fsyncing it.
-acl = "setfacl -m u:git:rwx /var/lib/kiln/queue/incoming"
+acl = "setfacl -m u:git:rwx /var/lib/kilnr/queue/incoming"
 
 assert acl in install, (
     "install.sh must grant git rwx on incoming so directory fsync works"

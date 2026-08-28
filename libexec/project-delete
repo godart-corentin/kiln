@@ -7,17 +7,17 @@ import sys
 from pathlib import Path
 
 GIT_ROOT = Path("/srv/git")
-CONFIG_ROOT = Path("/etc/kiln/projects")
-SECRETS_ROOT = Path("/etc/kiln/secrets")
+CONFIG_ROOT = Path("/etc/kilnr/projects")
+SECRETS_ROOT = Path("/etc/kilnr/secrets")
 QUEUE_DIRS = (
-    ("incoming", Path("/var/lib/kiln/queue/incoming")),
-    ("running", Path("/var/lib/kiln/queue/running")),
+    ("incoming", Path("/var/lib/kilnr/queue/incoming")),
+    ("running", Path("/var/lib/kilnr/queue/running")),
 )
 PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 
 
 def fail(message: str) -> None:
-    print(f"kiln project delete: {message}", file=sys.stderr)
+    print(f"kilnr project delete: {message}", file=sys.stderr)
     sys.exit(1)
 
 
@@ -77,7 +77,7 @@ def main() -> int:
 
     jobs = active_jobs(project)
     if jobs:
-        print("kiln project delete: project still has active jobs:", file=sys.stderr)
+        print("kilnr project delete: project still has active jobs:", file=sys.stderr)
         for queue_name, filename in jobs:
             print(f"  {queue_name}: {filename}", file=sys.stderr)
         return 1
@@ -97,7 +97,7 @@ def main() -> int:
     if secret_dir.exists():
         shutil.rmtree(secret_dir)
 
-    print(f"Deleted Kiln project: {project}")
+    print(f"Deleted Kilnr project: {project}")
     print("Build history was preserved.")
     return 0
 

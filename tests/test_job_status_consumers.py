@@ -17,8 +17,8 @@ def load_script(name, path):
     return module
 
 
-cli = load_script("kiln_cli_status_test", ROOT / "bin" / "kiln")
-notify = load_script("kiln_notify_status_test", ROOT / "libexec" / "notify-discord")
+cli = load_script("kilnr_cli_status_test", ROOT / "bin" / "kilnr")
+notify = load_script("kilnr_notify_status_test", ROOT / "libexec" / "notify-discord")
 
 
 def sample_status(state="running", job_state="running"):
@@ -34,7 +34,7 @@ def sample_status(state="running", job_state="running"):
         "started_at": "2026-08-26T00:00:00Z",
         "duration_seconds": None,
         "prepare": {"state": "success", "log": "logs/prepare.log"},
-        "pipeline_path": ".kiln/pipelines/ci.json",
+        "pipeline_path": ".kilnr/pipelines/ci.json",
         "pipeline": {
             "groups": {"quality": ["tests"]},
             "jobs": {

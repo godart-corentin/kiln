@@ -8,20 +8,20 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-CONFIG_ROOT = Path("/etc/kiln/projects")
-QUEUE_TMP = Path("/var/lib/kiln/queue/tmp")
-QUEUE_INCOMING = Path("/var/lib/kiln/queue/incoming")
+CONFIG_ROOT = Path("/etc/kilnr/projects")
+QUEUE_TMP = Path("/var/lib/kilnr/queue/tmp")
+QUEUE_INCOMING = Path("/var/lib/kilnr/queue/incoming")
 
 PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 
 
-class KilnError(Exception):
+class KilnrError(Exception):
     pass
 
 
 def fail(message: str) -> None:
-    raise KilnError(message)
+    raise KilnrError(message)
 
 
 def git(repo: Path, *args: str) -> str:
@@ -75,7 +75,7 @@ def load_project(project: str) -> dict:
 def classify(config: dict, old_oid: str, new_oid: str, ref: str):
     """Classify a Git ref update without selecting a CI pipeline.
 
-    Branch policy lives in the repository under .kiln/pipelines/*.json.
+    Branch policy lives in the repository under .kilnr/pipelines/*.json.
     Therefore every non-deletion branch push becomes a lightweight CI job;
     the controller later selects the single matching branch pipeline from the
     exact received SHA. A branch with no matching pipeline is silently ignored
@@ -176,7 +176,7 @@ def main() -> int:
     now = datetime.now(timezone.utc)
     timestamp = now.strftime("%Y%m%dT%H%M%S%fZ")
     job_id = f"{timestamp}-{project}-{commit_sha[:7]}-{secrets.token_hex(4)}"
-    pin_ref = f"refs/kiln/jobs/{job_id}"
+    pin_ref = f"refs/kilnr/jobs/{job_id}"
 
     git(repo, "update-ref", pin_ref, commit_sha)
     published = False
@@ -218,9 +218,9 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except KilnError as exc:
-        print(f"kiln enqueue: {exc}", file=sys.stderr)
+    except KilnrError as exc:
+        print(f"kilnr enqueue: {exc}", file=sys.stderr)
         sys.exit(1)
     except Exception as exc:
-        print(f"kiln enqueue: unexpected error: {exc}", file=sys.stderr)
+        print(f"kilnr enqueue: unexpected error: {exc}", file=sys.stderr)
         sys.exit(1)

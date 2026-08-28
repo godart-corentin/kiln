@@ -11,7 +11,7 @@ def test_libexec_does_not_shadow_stdlib_secrets():
         "scripts such as enqueue that use secrets.token_hex()"
     )
     install = (ROOT / "install.sh").read_text(encoding="utf-8")
-    assert "rm -f /usr/local/libexec/kiln/secrets.py" in install
+    assert "rm -f /usr/local/libexec/kilnr/secrets.py" in install
 
 
 if __name__ == "__main__":

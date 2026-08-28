@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -u
 
-ENQUEUE="/usr/local/libexec/kiln/enqueue"
+ENQUEUE="/usr/local/libexec/kilnr/enqueue"
 
 repo="$(
     /usr/bin/git rev-parse --absolute-git-dir 2>/dev/null
 )" || {
-    echo "kiln: cannot determine repository" >&2
+    echo "kilnr: cannot determine repository" >&2
     exit 0
 }
 
@@ -14,7 +14,7 @@ repo_name="$(basename -- "$repo")"
 project="${repo_name%.git}"
 
 if [[ ! "$project" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]]; then
-    echo "kiln: invalid repository/project name: $project" >&2
+    echo "kilnr: invalid repository/project name: $project" >&2
     exit 0
 fi
 
@@ -35,12 +35,12 @@ do
     rc=$?
 
     if [[ "$rc" -ne 0 ]]; then
-        echo "kiln: enqueue failed for $ref" >&2
+        echo "kilnr: enqueue failed for $ref" >&2
         [[ -n "$output" ]] && echo "$output" >&2
         continue
     fi
 
-    [[ -n "$output" ]] && echo "kiln: queued $output" >&2
+    [[ -n "$output" ]] && echo "kilnr: queued $output" >&2
 done
 
 exit 0

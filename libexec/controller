@@ -12,14 +12,14 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-CONFIG_ROOT = Path("/etc/kiln/projects")
-INCOMING = Path("/var/lib/kiln/queue/incoming")
-RUNNING = Path("/var/lib/kiln/queue/running")
-BUILDS = Path("/var/lib/kiln/builds")
-LOCK_FILE = Path("/var/lib/kiln/locks/controller.lock")
+CONFIG_ROOT = Path("/etc/kilnr/projects")
+INCOMING = Path("/var/lib/kilnr/queue/incoming")
+RUNNING = Path("/var/lib/kilnr/queue/running")
+BUILDS = Path("/var/lib/kilnr/builds")
+LOCK_FILE = Path("/var/lib/kilnr/locks/controller.lock")
 
-CI_PIPELINE_ROOT = ".kiln/pipelines"
-RELEASE_PIPELINE = ".kiln/release.json"
+CI_PIPELINE_ROOT = ".kilnr/pipelines"
+RELEASE_PIPELINE = ".kilnr/release.json"
 MAX_PIPELINES = 64
 MAX_PIPELINE_BYTES = 256 * 1024
 MAX_PACKAGE_JSON_BYTES = 1024 * 1024
@@ -30,29 +30,29 @@ BUILD_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 
 PIPELINE_MODULE_PATH = Path(__file__).resolve().with_name("pipeline.py")
-_PIPELINE_SPEC = importlib.util.spec_from_file_location("kiln_pipeline_schema", PIPELINE_MODULE_PATH)
+_PIPELINE_SPEC = importlib.util.spec_from_file_location("kilnr_pipeline_schema", PIPELINE_MODULE_PATH)
 if _PIPELINE_SPEC is None or _PIPELINE_SPEC.loader is None:
     raise RuntimeError(f"cannot load pipeline module: {PIPELINE_MODULE_PATH}")
 pipeline_schema = importlib.util.module_from_spec(_PIPELINE_SPEC)
 _PIPELINE_SPEC.loader.exec_module(pipeline_schema)
 
-SECRETS_ROOT = Path("/etc/kiln/secrets")
-SECRET_STAGING = Path("/var/lib/kiln/secret-staging")
-JOB_RUNTIME = Path("/var/lib/kiln/job-runtime")
-SECRETS_MODULE_PATH = Path(__file__).resolve().with_name("kiln_secrets.py")
-_SECRETS_SPEC = importlib.util.spec_from_file_location("kiln_secrets", SECRETS_MODULE_PATH)
+SECRETS_ROOT = Path("/etc/kilnr/secrets")
+SECRET_STAGING = Path("/var/lib/kilnr/secret-staging")
+JOB_RUNTIME = Path("/var/lib/kilnr/job-runtime")
+SECRETS_MODULE_PATH = Path(__file__).resolve().with_name("kilnr_secrets.py")
+_SECRETS_SPEC = importlib.util.spec_from_file_location("kilnr_secrets", SECRETS_MODULE_PATH)
 if _SECRETS_SPEC is None or _SECRETS_SPEC.loader is None:
     raise RuntimeError(f"cannot load secrets module: {SECRETS_MODULE_PATH}")
 secret_schema = importlib.util.module_from_spec(_SECRETS_SPEC)
 _SECRETS_SPEC.loader.exec_module(secret_schema)
 
 
-class KilnError(Exception):
+class KilnrError(Exception):
     pass
 
 
 def fail(message):
-    raise KilnError(message)
+    raise KilnrError(message)
 
 
 def now():
@@ -135,7 +135,7 @@ def validate_job(job, filename):
         fail("invalid job type")
     if not OID_RE.fullmatch(str(job["sha"])):
         fail("invalid job sha")
-    if job["pin_ref"] != "refs/kiln/jobs/" + job["id"]:
+    if job["pin_ref"] != "refs/kilnr/jobs/" + job["id"]:
         fail("invalid pin ref")
 
     event = job.get("event")
@@ -180,7 +180,7 @@ def load_config(project):
     if (
         not isinstance(networks, list)
         or not networks
-        or any(network not in ("none", "kiln-ci") for network in networks)
+        or any(network not in ("none", "kilnr-ci") for network in networks)
     ):
         fail("runner.allowed_networks invalid")
     return cfg
@@ -429,7 +429,7 @@ def write_makefile(build_dir, runtime):
         deps = " ".join(f"job-{dep}" for dep in spec["resolved_needs"])
         lines.append((f"job-{job_id}: {deps}").rstrip())
         lines.append(
-            "\t@/usr/local/libexec/kiln/execute "
+            "\t@/usr/local/libexec/kilnr/execute "
             f"{build} {shlex.quote(job_id)}"
         )
         lines.append("")
@@ -585,22 +585,22 @@ def claim():
 
 
 def cleanup_pin(job, cfg):
-    expected = "refs/kiln/jobs/" + job["id"]
+    expected = "refs/kilnr/jobs/" + job["id"]
     if job.get("pin_ref") != expected:
-        print(f"kiln: warning: refusing unsafe pin path: {job.get('pin_ref')!r}", file=sys.stderr)
+        print(f"kilnr: warning: refusing unsafe pin path: {job.get('pin_ref')!r}", file=sys.stderr)
         return
-    pin_path = Path(cfg["repository"]) / "refs" / "kiln" / "jobs" / job["id"]
+    pin_path = Path(cfg["repository"]) / "refs" / "kilnr" / "jobs" / job["id"]
     try:
         pin_path.unlink()
     except FileNotFoundError:
         pass
     except OSError as exc:
-        print(f"kiln: warning: cannot delete {job['pin_ref']}: {exc}", file=sys.stderr)
+        print(f"kilnr: warning: cannot delete {job['pin_ref']}: {exc}", file=sys.stderr)
 
 
 def cleanup_containers(build_id):
     result = subprocess.run(
-        ["/usr/bin/docker", "ps", "-aq", "--filter", f"label=kiln.build_id={build_id}"],
+        ["/usr/bin/docker", "ps", "-aq", "--filter", f"label=kilnr.build_id={build_id}"],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -624,7 +624,7 @@ def recover_stale():
             validate_job(job, job_path.name)
             cfg = load_config(job["project"])
         except Exception as exc:
-            print(f"kiln: dropping invalid stale job {job_path.name}: {exc}", file=sys.stderr)
+            print(f"kilnr: dropping invalid stale job {job_path.name}: {exc}", file=sys.stderr)
             job_path.unlink(missing_ok=True)
             continue
 
@@ -661,24 +661,24 @@ def notify(build_id, build_dir):
     log_path = build_dir / "logs" / "notify.log"
     with log_path.open("a", encoding="utf-8") as log:
         result = subprocess.run(
-            ["/usr/local/libexec/kiln/notify-discord", build_id],
+            ["/usr/local/libexec/kilnr/notify-discord", build_id],
             stdout=log,
             stderr=log,
             check=False,
         )
     if result.returncode:
-        print(f"kiln: warning: Discord notification failed for {build_id}", file=sys.stderr)
+        print(f"kilnr: warning: Discord notification failed for {build_id}", file=sys.stderr)
 
 
 def record_selection_failure(job, cfg, job_path, message):
     build_dir = create_build_skeleton(job)
     with (build_dir / "logs" / "prepare.log").open("a", encoding="utf-8") as log:
-        log.write(f"KILN ERROR: {message}\n")
+        log.write(f"KILNR ERROR: {message}\n")
     fail_status(build_dir, message)
     cleanup_pin(job, cfg)
     job_path.unlink(missing_ok=True)
     notify(job["id"], build_dir)
-    print(f"kiln: {job['id']} failed: {message}", file=sys.stderr)
+    print(f"kilnr: {job['id']} failed: {message}", file=sys.stderr)
 
 
 def process(job_path):
@@ -696,7 +696,7 @@ def process(job_path):
         branch = job_branch(job) or "?"
         cleanup_pin(job, cfg)
         job_path.unlink(missing_ok=True)
-        print(f"kiln: {job['id']} ignored: no CI pipeline matches branch {branch!r}")
+        print(f"kilnr: {job['id']} ignored: no CI pipeline matches branch {branch!r}")
         return
 
     pipeline_path, pipeline = selection
@@ -729,16 +729,16 @@ def process(job_path):
             ).returncode
 
         state = finalize(build_dir, make_rc)
-        print(f"kiln: {job['id']} -> {state} ({pipeline_path})")
+        print(f"kilnr: {job['id']} -> {state} ({pipeline_path})")
 
     except Exception as exc:
         try:
             with (build_dir / "logs" / "prepare.log").open("a", encoding="utf-8") as log:
-                log.write(f"\nKILN ERROR: {exc}\n")
+                log.write(f"\nKILNR ERROR: {exc}\n")
             fail_status(build_dir, str(exc))
         except Exception as persist_exc:
-            print(f"kiln: cannot persist failure: {persist_exc}", file=sys.stderr)
-        print(f"kiln: {job['id']} failed: {exc}", file=sys.stderr)
+            print(f"kilnr: cannot persist failure: {persist_exc}", file=sys.stderr)
+        print(f"kilnr: {job['id']} failed: {exc}", file=sys.stderr)
     finally:
         cleanup_pin(job, cfg)
         job_path.unlink(missing_ok=True)
@@ -748,8 +748,8 @@ def process(job_path):
 
 def main():
     user = pwd.getpwuid(os.geteuid()).pw_name
-    if user != "kiln":
-        fail(f"controller must run as kiln, not {user}")
+    if user != "kilnr":
+        fail(f"controller must run as kilnr, not {user}")
 
     fd = os.open(LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o640)
     try:
@@ -766,7 +766,7 @@ def main():
             try:
                 process(job_path)
             except Exception as exc:
-                print(f"kiln: controller error: {exc}", file=sys.stderr)
+                print(f"kilnr: controller error: {exc}", file=sys.stderr)
         return 0
     finally:
         os.close(fd)
@@ -775,9 +775,9 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except KilnError as exc:
-        print(f"kiln controller: {exc}", file=sys.stderr)
+    except KilnrError as exc:
+        print(f"kilnr controller: {exc}", file=sys.stderr)
         sys.exit(1)
     except Exception as exc:
-        print(f"kiln controller: unexpected error: {exc}", file=sys.stderr)
+        print(f"kilnr controller: unexpected error: {exc}", file=sys.stderr)
         sys.exit(1)

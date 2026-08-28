@@ -4,7 +4,7 @@
 
 **Goal:** Add a project/job-type/pnpm-version scoped persistent pnpm store cache that can be enabled per job with `"cache": ["pnpm"]`.
 
-**Architecture:** Pipeline parsing validates `cache` independently from `tools`, then normalizes enabled caches to the resolved tool version. The executor creates host cache directories under `/var/lib/kiln/cache/<project>/<job-type>/pnpm/<version>`, bind-mounts them at `/run/kiln/cache/pnpm`, and configures the managed pnpm wrapper to use that store. Cache data never becomes workspace data and branch/release caches remain isolated.
+**Architecture:** Pipeline parsing validates `cache` independently from `tools`, then normalizes enabled caches to the resolved tool version. The executor creates host cache directories under `/var/lib/kilnr/cache/<project>/<job-type>/pnpm/<version>`, bind-mounts them at `/run/kilnr/cache/pnpm`, and configures the managed pnpm wrapper to use that store. Cache data never becomes workspace data and branch/release caches remain isolated.
 
 **Tech Stack:** Python 3 stdlib, Docker CLI, pnpm/Corepack, Bash installer/tests.
 
@@ -46,12 +46,12 @@
 
 **Interfaces:**
 - Consumes: `runtime["project"]`, `runtime["job_type"]`, normalized `job["cache"]`.
-- Produces: writable bind mount at `/run/kiln/cache/pnpm`; managed pnpm wrapper uses that path as `store-dir`.
+- Produces: writable bind mount at `/run/kilnr/cache/pnpm`; managed pnpm wrapper uses that path as `store-dir`.
 
 - [ ] Add failing executor tests for cache root path, writable mount, and managed pnpm configuration.
 - [ ] Run tests and verify they fail.
 - [ ] Add cache root preparation and mount generation.
-- [ ] Configure only the managed pnpm wrapper to use `/run/kiln/cache/pnpm` when enabled.
+- [ ] Configure only the managed pnpm wrapper to use `/run/kilnr/cache/pnpm` when enabled.
 - [ ] Re-run executor/cache tests.
 
 ### Task 3: Install cache root and document usage
@@ -62,7 +62,7 @@
 - Test: `tests/test_cache.py`
 
 **Interfaces:**
-- Produces: `/var/lib/kiln/cache` owned by `kiln:kiln`, mode `0700`.
+- Produces: `/var/lib/kilnr/cache` owned by `kilnr:kilnr`, mode `0700`.
 
 - [ ] Add installation/static tests for the cache root.
 - [ ] Add the cache directory to `install.sh`.

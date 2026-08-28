@@ -13,17 +13,17 @@ sshd → git-shell
 enqueue
    ├─ classifies ci/release
    ├─ resolves exact commit SHA
-   ├─ creates refs/kiln/jobs/<job-id>
+   ├─ creates refs/kilnr/jobs/<job-id>
    └─ atomically publishes job.json
           ▼
-/var/lib/kiln/queue/incoming
+/var/lib/kilnr/queue/incoming
           ▼ systemd.path
-kiln-controller.service
+kilnr-controller.service
           ▼
 controller
    ├─ claims job into queue/running
    ├─ archives exact SHA into build/src
-   ├─ reads .kiln/pipeline.json from that SHA
+   ├─ reads .kilnr/pipeline.json from that SHA
    ├─ validates the pipeline
    ├─ generates trusted pipeline.mk
    └─ launches GNU Make
@@ -37,13 +37,13 @@ ephemeral Docker container
 
 ## Why Make
 
-Kiln does not implement a general-purpose scheduler. Each pipeline step becomes a Make target. `needs` becomes target prerequisites. GNU Make handles readiness, concurrency and dependency failure propagation.
+Kilnr does not implement a general-purpose scheduler. Each pipeline step becomes a Make target. `needs` becomes target prerequisites. GNU Make handles readiness, concurrency and dependency failure propagation.
 
-After Make finishes, Kiln converts remaining `pending` steps into `skipped`.
+After Make finishes, Kilnr converts remaining `pending` steps into `skipped`.
 
 ## Exact SHA
 
-The hook never schedules `main` or a tag name as a build source. It stores the resolved commit SHA. An internal `refs/kiln/jobs/<id>` ref keeps the object reachable until the build has been prepared.
+The hook never schedules `main` or a tag name as a build source. It stores the resolved commit SHA. An internal `refs/kilnr/jobs/<id>` ref keeps the object reachable until the build has been prepared.
 
 The workspace is produced with `git archive <sha>`, so it contains no `.git` directory.
 
@@ -51,17 +51,17 @@ The workspace is produced with `git archive <sha>`, so it contains no `.git` dir
 
 ### `git`
 
-Owns the bare repositories and accepts restricted SSH Git traffic. It can submit jobs but cannot read Kiln secrets.
+Owns the bare repositories and accepts restricted SSH Git traffic. It can submit jobs but cannot read Kilnr secrets.
 
-### `kiln`
+### `kilnr`
 
-Runs the controller. It can read bare repositories and write only the `refs/kiln/jobs` namespace. The systemd controller receives Docker group access through `SupplementaryGroups=docker`; the account is not permanently added to the Docker group.
+Runs the controller. It can read bare repositories and write only the `refs/kilnr/jobs` namespace. The systemd controller receives Docker group access through `SupplementaryGroups=docker`; the account is not permanently added to the Docker group.
 
 ### build containers
 
-Repository-controlled commands run only inside Docker. They do not receive the Docker socket or Kiln secrets.
+Repository-controlled commands run only inside Docker. They do not receive the Docker socket or Kilnr secrets.
 
-### `kiln-web`
+### `kilnr-web`
 
 The optional web interface only reads build output. It runs in a separate Docker container behind Caddy and receives no host port.
 
@@ -84,4 +84,4 @@ Pipeline steps with `"when": "release"` are excluded entirely from normal CI run
 
 ## Current limitation
 
-Kiln 0.1 executes project steps in Linux Docker containers. Native macOS workers are intentionally not part of this initial package.
+Kilnr 0.1 executes project steps in Linux Docker containers. Native macOS workers are intentionally not part of this initial package.

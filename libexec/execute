@@ -12,36 +12,36 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-BUILDS = Path("/var/lib/kiln/builds")
-CACHE_ROOT = Path("/var/lib/kiln/cache")
+BUILDS = Path("/var/lib/kilnr/builds")
+CACHE_ROOT = Path("/var/lib/kilnr/cache")
 BUILD_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 JOB_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 TOOL_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
 
 ARTIFACTS_MODULE_PATH = Path(__file__).resolve().with_name("artifacts.py")
-_ARTIFACTS_SPEC = importlib.util.spec_from_file_location("kiln_artifacts", ARTIFACTS_MODULE_PATH)
+_ARTIFACTS_SPEC = importlib.util.spec_from_file_location("kilnr_artifacts", ARTIFACTS_MODULE_PATH)
 if _ARTIFACTS_SPEC is None or _ARTIFACTS_SPEC.loader is None:
     raise RuntimeError(f"cannot load artifacts module: {ARTIFACTS_MODULE_PATH}")
 artifacts_schema = importlib.util.module_from_spec(_ARTIFACTS_SPEC)
 _ARTIFACTS_SPEC.loader.exec_module(artifacts_schema)
 
-SECRETS_ROOT = Path("/etc/kiln/secrets")
-SECRET_STAGING = Path("/var/lib/kiln/secret-staging")
-JOB_RUNTIME = Path("/var/lib/kiln/job-runtime")
-SECRETS_MODULE_PATH = Path(__file__).resolve().with_name("kiln_secrets.py")
-_SECRETS_SPEC = importlib.util.spec_from_file_location("kiln_secrets", SECRETS_MODULE_PATH)
+SECRETS_ROOT = Path("/etc/kilnr/secrets")
+SECRET_STAGING = Path("/var/lib/kilnr/secret-staging")
+JOB_RUNTIME = Path("/var/lib/kilnr/job-runtime")
+SECRETS_MODULE_PATH = Path(__file__).resolve().with_name("kilnr_secrets.py")
+_SECRETS_SPEC = importlib.util.spec_from_file_location("kilnr_secrets", SECRETS_MODULE_PATH)
 if _SECRETS_SPEC is None or _SECRETS_SPEC.loader is None:
     raise RuntimeError(f"cannot load secrets module: {SECRETS_MODULE_PATH}")
 secret_schema = importlib.util.module_from_spec(_SECRETS_SPEC)
 _SECRETS_SPEC.loader.exec_module(secret_schema)
 
 
-class KilnError(Exception):
+class KilnrError(Exception):
     pass
 
 
 def fail(message):
-    raise KilnError(message)
+    raise KilnrError(message)
 
 
 def iso(value=None):
@@ -113,8 +113,8 @@ def prepare_execution(build_dir, job_id, job):
         script_path = commands_dir / f"{job_id}.sh"
         script_path.write_text(render_run_script(job["run"]), encoding="utf-8")
         script_path.chmod(0o600)
-        mount = f"type=bind,src={script_path},dst=/run/kiln/job.sh,readonly"
-        return [mount], ["/bin/sh", "/run/kiln/job.sh"]
+        mount = f"type=bind,src={script_path},dst=/run/kilnr/job.sh,readonly"
+        return [mount], ["/bin/sh", "/run/kilnr/job.sh"]
 
     if mode == "script":
         return [], [f"/workspace/{job['script']}"]
@@ -129,12 +129,12 @@ def render_tools_wrapper(tools):
     lines = [
         "#!/bin/sh",
         "set -eu",
-        'TOOLS_ROOT="/tmp/kiln-tools"',
+        'TOOLS_ROOT="/tmp/kilnr-tools"',
         'mkdir -p "$TOOLS_ROOT/corepack"',
         'export COREPACK_HOME="$TOOLS_ROOT/corepack"',
         'export COREPACK_DEFAULT_TO_LATEST=0',
         'export COREPACK_ENABLE_PROJECT_SPEC=0',
-        'export PATH="/run/kiln/tools/bin:$PATH"',
+        'export PATH="/run/kilnr/tools/bin:$PATH"',
         'exec "$@"',
         "",
     ]
@@ -174,17 +174,17 @@ def prepare_tools_wrapper(build_dir, job_id, tools, execution_argv):
     mounts = [
         (
             f"type=bind,src={tools_wrapper},"
-            "dst=/run/kiln/tools-wrapper.sh,readonly"
+            "dst=/run/kilnr/tools-wrapper.sh,readonly"
         ),
         (
             f"type=bind,src={tools_root},"
-            "dst=/run/kiln/tools,readonly"
+            "dst=/run/kilnr/tools,readonly"
         ),
     ]
 
     argv = [
         "/bin/sh",
-        "/run/kiln/tools-wrapper.sh",
+        "/run/kilnr/tools-wrapper.sh",
         *execution_argv,
     ]
 
@@ -192,14 +192,14 @@ def prepare_tools_wrapper(build_dir, job_id, tools, execution_argv):
 
 
 def input_env_name(job_id):
-    return "KILN_INPUT_" + job_id.upper().replace("-", "_")
+    return "KILNR_INPUT_" + job_id.upper().replace("-", "_")
 
 
 def build_input_mounts(input_roots):
     mounts = []
     for producer, root in input_roots.items():
         mounts.append(
-            f"type=bind,src={root},dst=/run/kiln/inputs/{producer},readonly"
+            f"type=bind,src={root},dst=/run/kilnr/inputs/{producer},readonly"
         )
     return mounts
 
@@ -227,41 +227,41 @@ def prepare_cache_mounts(runtime, job):
         root = CACHE_ROOT / project / job_type / name / version
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
         root.chmod(0o700)
-        mounts.append(f"type=bind,src={root},dst=/run/kiln/cache/{name}")
+        mounts.append(f"type=bind,src={root},dst=/run/kilnr/cache/{name}")
     return mounts
 
 
 def build_public_env(runtime, job_id, job, input_roots):
     env = {
         "CI": "true",
-        "HOME": "/run/kiln/home",
-        "KILN_BUILD_ID": runtime["build_id"],
-        "KILN_PROJECT": runtime["project"],
-        "KILN_SHA": runtime["sha"],
-        "KILN_REF": runtime["ref"],
-        "KILN_JOB_TYPE": runtime["job_type"],
-        "KILN_JOB": job_id,
+        "HOME": "/run/kilnr/home",
+        "KILNR_BUILD_ID": runtime["build_id"],
+        "KILNR_PROJECT": runtime["project"],
+        "KILNR_SHA": runtime["sha"],
+        "KILNR_REF": runtime["ref"],
+        "KILNR_JOB_TYPE": runtime["job_type"],
+        "KILNR_JOB": job_id,
     }
     branch = runtime.get("branch")
     tag = runtime.get("tag")
     if branch:
-        env["KILN_BRANCH"] = branch
+        env["KILNR_BRANCH"] = branch
     if tag:
-        env["KILN_TAG"] = tag
+        env["KILNR_TAG"] = tag
     env.update(job.get("env", {}))
     if "pnpm" in job.get("cache", {}):
-        env["npm_config_store_dir"] = "/run/kiln/cache/pnpm"
-    env.setdefault("XDG_RUNTIME_DIR", "/run/kiln/tmp")
-    env.setdefault("TMPDIR", "/run/kiln/tmp")
-    env.setdefault("TMP", "/run/kiln/tmp")
-    env.setdefault("TEMP", "/run/kiln/tmp")
+        env["npm_config_store_dir"] = "/run/kilnr/cache/pnpm"
+    env.setdefault("XDG_RUNTIME_DIR", "/run/kilnr/tmp")
+    env.setdefault("TMPDIR", "/run/kilnr/tmp")
+    env.setdefault("TMP", "/run/kilnr/tmp")
+    env.setdefault("TEMP", "/run/kilnr/tmp")
     aliases = set()
     for producer in input_roots:
         key = input_env_name(producer)
         if key in aliases:
             fail(f"input environment alias collision for {producer!r}")
         aliases.add(key)
-        env[key] = f"/run/kiln/inputs/{producer}"
+        env[key] = f"/run/kilnr/inputs/{producer}"
     return env
 
 
@@ -273,7 +273,7 @@ def prepare_job_home(build_id, job_id):
     home.mkdir(mode=0o700, parents=True, exist_ok=False)
     home.chmod(0o700)
 
-    return home, f"type=bind,src={home},dst=/run/kiln/home"
+    return home, f"type=bind,src={home},dst=/run/kilnr/home"
 
 
 def cleanup_job_runtime(build_id, job_id):
@@ -300,7 +300,7 @@ def collect_job_artifacts(build_dir, work_dir, job_id, job):
 def render_secret_wrapper(metadata):
     lines = ["#!/bin/sh", "set -eu"]
     for name, item in metadata.items():
-        path = f"/run/kiln/secrets/{name}.value"
+        path = f"/run/kilnr/secrets/{name}.value"
         if item["kind"] == "text":
             lines.append(f'export {name}="$(cat {path})"')
         elif item["kind"] == "file":
@@ -439,7 +439,7 @@ def prepare_workspace(src_dir, work_dir, log):
 
 
 def container_name(build_id, job_id):
-    return f"kiln-{build_id[-32:]}-{job_id}"[:120]
+    return f"kilnr-{build_id[-32:]}-{job_id}"[:120]
 
 
 def main():
@@ -511,7 +511,7 @@ def main():
             prepare_workspace(src_dir, work_dir, log)
         except Exception as exc:
             error = str(exc)
-            log.write(f"\nKILN ERROR: {error}\n")
+            log.write(f"\nKILNR ERROR: {error}\n")
             rc = 1
         else:
             try:
@@ -520,7 +520,7 @@ def main():
                 )
             except artifacts_schema.ArtifactError as exc:
                 error = str(exc)
-                log.write(f"\nKILN ERROR: {error}\n")
+                log.write(f"\nKILNR ERROR: {error}\n")
                 rc = 1
                 input_roots = None
 
@@ -531,7 +531,7 @@ def main():
                 )
             except Exception as exc:
                 error = str(exc)
-                log.write(f"\nKILN ERROR: {error}\n")
+                log.write(f"\nKILNR ERROR: {error}\n")
                 rc = 1
 
         if error is None and input_roots is not None:
@@ -540,14 +540,14 @@ def main():
             extra_mounts.extend(prepare_cache_mounts(runtime, job))
             if secret_stage is not None:
                 extra_mounts.append(
-                    f"type=bind,src={secret_stage},dst=/run/kiln/secrets,readonly"
+                    f"type=bind,src={secret_stage},dst=/run/kilnr/secrets,readonly"
                 )
                 wrapper = prepare_secret_wrapper(build_dir, job_id, secret_metadata)
                 extra_mounts.append(
-                    f"type=bind,src={wrapper},dst=/run/kiln/secret-wrapper.sh,readonly"
+                    f"type=bind,src={wrapper},dst=/run/kilnr/secret-wrapper.sh,readonly"
                 )
                 execution_argv = [
-                    "/bin/sh", "/run/kiln/secret-wrapper.sh", *execution_argv
+                    "/bin/sh", "/run/kilnr/secret-wrapper.sh", *execution_argv
                 ]
             tools_mounts, execution_argv = prepare_tools_wrapper(
                 build_dir,
@@ -579,10 +579,10 @@ def main():
                 "--user", f"{uid}:{gid}",
                 "--workdir", "/workspace",
                 "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=512m",
-                "--tmpfs", f"/run/kiln/tmp:rw,nosuid,nodev,exec,size=512m,uid={uid},gid={gid},mode=700",
+                "--tmpfs", f"/run/kilnr/tmp:rw,nosuid,nodev,exec,size=512m,uid={uid},gid={gid},mode=700",
                 "--mount", f"type=bind,src={work_dir},dst=/workspace",
-                "--label", f"kiln.build_id={build_id}",
-                "--label", f"kiln.job={job_id}",
+                "--label", f"kilnr.build_id={build_id}",
+                "--label", f"kilnr.job={job_id}",
             ]
             for key, value in public_env.items():
                 docker_command.extend(["--env", f"{key}={value}"])
@@ -621,7 +621,7 @@ def main():
                     process.kill()
                     process.wait()
                 rc = 124
-                log.write(f"\nKILN ERROR: {error}\n")
+                log.write(f"\nKILNR ERROR: {error}\n")
             finally:
                 reader.join(timeout=15)
 
@@ -632,7 +632,7 @@ def main():
                     error = str(exc)
                     rc = 1
                     collected = []
-                    log.write(f"\nKILN ERROR: artifact collection failed: {error}\n")
+                    log.write(f"\nKILNR ERROR: artifact collection failed: {error}\n")
                 else:
                     if collected:
                         log.write("\nCollected artifacts:\n")
@@ -664,9 +664,9 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except KilnError as exc:
-        print(f"kiln execute: {exc}", file=sys.stderr)
+    except KilnrError as exc:
+        print(f"kilnr execute: {exc}", file=sys.stderr)
         sys.exit(1)
     except Exception as exc:
-        print(f"kiln execute: unexpected error: {exc}", file=sys.stderr)
+        print(f"kilnr execute: unexpected error: {exc}", file=sys.stderr)
         sys.exit(1)

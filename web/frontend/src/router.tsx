@@ -6,7 +6,7 @@ import { LogPage } from './routes/LogPage'
 function RootLayout() {
   return (
     <main className="shell">
-      <div className="topbar"><a className="brand" href="/"><span>◆</span> Kiln</a><span className="muted">CI</span></div>
+      <div className="topbar"><a className="brand" href="/"><span>◆</span> Kilnr</a><span className="muted">CI</span></div>
       <Outlet />
     </main>
   )

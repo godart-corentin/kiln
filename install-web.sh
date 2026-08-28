@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 die() {
-    echo "kiln web install: $*" >&2
+    echo "kilnr web install: $*" >&2
     exit 1
 }
 
@@ -14,16 +14,16 @@ DOMAIN="$1"
 [[ "$DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] \
     || die "invalid domain"
 
-CADDY_CONTAINER="${KILN_CADDY_CONTAINER:-caddy}"
-NETWORK="${KILN_PROXY_NETWORK:-kiln-proxy}"
+CADDY_CONTAINER="${KILNR_CADDY_CONTAINER:-caddy}"
+NETWORK="${KILNR_PROXY_NETWORK:-kilnr-proxy}"
 
-KILN_ROOT="/opt/kiln"
-KILN_COMPOSE="${KILN_ROOT}/docker-compose.yml"
+KILNR_ROOT="/opt/kilnr"
+KILNR_COMPOSE="${KILNR_ROOT}/docker-compose.yml"
 
-WEB_SOURCE="/usr/local/share/kiln/web-src"
-WEB_CONFIG="/etc/kiln/web.json"
+WEB_SOURCE="/usr/local/share/kilnr/web-src"
+WEB_CONFIG="/etc/kilnr/web.json"
 
-AUTH_USER="${KILN_WEB_USER:-kiln}"
+AUTH_USER="${KILNR_WEB_USER:-kilnr}"
 
 
 #
@@ -40,7 +40,7 @@ docker compose version >/dev/null 2>&1 \
     || die "docker compose plugin unavailable"
 
 [[ -f "$WEB_SOURCE/Dockerfile" ]] \
-    || die "Kiln web source is not installed; run install.sh first"
+    || die "Kilnr web source is not installed; run install.sh first"
 
 docker inspect "$CADDY_CONTAINER" >/dev/null 2>&1 \
     || die "running Caddy container '$CADDY_CONTAINER' not found"
@@ -78,12 +78,12 @@ CADDY_SERVICE="$(
 #
 # Docker Compose can report multiple files separated by commas.
 #
-# The first one is the base compose file. Kiln installs a conventional
+# The first one is the base compose file. Kilnr installs a conventional
 # docker-compose.override.yml beside it so future normal:
 #
 #     docker compose up -d
 #
-# invocations keep the Kiln proxy network.
+# invocations keep the Kilnr proxy network.
 #
 
 CADDY_COMPOSE="${CADDY_COMPOSE_FILES%%,*}"
@@ -97,7 +97,7 @@ CADDY_OVERRIDE="$(
 #
 # Remember every network Caddy currently has.
 #
-# After installation we verify that all of them still exist. Kiln must
+# After installation we verify that all of them still exist. Kilnr must
 # never disconnect Caddy from Jellyfin, Seerr, or any unrelated service.
 #
 # Docker's Go template may emit a final blank line; filter it out.
@@ -131,36 +131,36 @@ CADDYFILE="$(
 #
 
 if [[ -f "$CADDY_OVERRIDE" ]] \
-    && ! grep -q '# KILN MANAGED OVERRIDE' "$CADDY_OVERRIDE"
+    && ! grep -q '# KILNR MANAGED OVERRIDE' "$CADDY_OVERRIDE"
 then
-    die "$CADDY_OVERRIDE already exists and is not managed by Kiln; integrate kiln-proxy manually"
+    die "$CADDY_OVERRIDE already exists and is not managed by Kilnr; integrate kilnr-proxy manually"
 fi
 
 
 #
-# Runtime identities used by kiln-web.
+# Runtime identities used by kilnr-web.
 #
 
-KILN_WEB_UID="$(
-    id -u kiln-web
+KILNR_WEB_UID="$(
+    id -u kilnr-web
 )"
 
-KILN_WEB_GID="$(
-    id -g kiln-web
+KILNR_WEB_GID="$(
+    id -g kilnr-web
 )"
 
-KILN_READERS_GID="$(
-    getent group kiln-readers \
+KILNR_READERS_GID="$(
+    getent group kilnr-readers \
         | cut -d: -f3
 )"
 
-mkdir -p "$KILN_ROOT"
+mkdir -p "$KILNR_ROOT"
 
 
 #
-# Shared Caddy <-> Kiln network.
+# Shared Caddy <-> Kilnr network.
 #
-# It is internal because kiln-web itself does not need Internet access.
+# It is internal because kilnr-web itself does not need Internet access.
 #
 
 if ! docker network inspect "$NETWORK" >/dev/null 2>&1
@@ -190,16 +190,16 @@ TMP_DIR="$(
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 TMP_OVERRIDE="${TMP_DIR}/docker-compose.override.yml"
-TMP_COMPOSE="${TMP_DIR}/kiln-compose.yml"
+TMP_COMPOSE="${TMP_DIR}/kilnr-compose.yml"
 TMP_CADDYFILE="${TMP_DIR}/Caddyfile"
 
 
 #
 # IMPORTANT:
 #
-# Keep Caddy on its Compose default network AND add kiln_proxy.
+# Keep Caddy on its Compose default network AND add kilnr_proxy.
 #
-# An earlier Kiln 0.1.0 template declared only kiln_proxy here.
+# An earlier Kilnr 0.1.0 template declared only kilnr_proxy here.
 # Docker Compose consequently recreated Caddy without its original default
 # network, breaking reverse proxies such as:
 #
@@ -209,53 +209,53 @@ TMP_CADDYFILE="${TMP_DIR}/Caddyfile"
 #
 
 cat >"$TMP_OVERRIDE" <<EOF
-# KILN MANAGED OVERRIDE
+# KILNR MANAGED OVERRIDE
 services:
   ${CADDY_SERVICE}:
     networks:
       default:
-      kiln_proxy:
+      kilnr_proxy:
 
 networks:
-  kiln_proxy:
+  kilnr_proxy:
     external: true
     name: ${NETWORK}
 EOF
 
 
 #
-# Kiln Web has its own Compose project.
+# Kilnr Web has its own Compose project.
 #
-# It publishes no host port. Caddy reaches it only through kiln-proxy.
+# It publishes no host port. Caddy reaches it only through kilnr-proxy.
 #
 
 cat >"$TMP_COMPOSE" <<EOF
 services:
-  kiln-web:
+  kilnr-web:
     build:
       context: ${WEB_SOURCE}
       dockerfile: Dockerfile
 
-    image: kiln-web:local
-    container_name: kiln-web
+    image: kilnr-web:local
+    container_name: kilnr-web
 
     restart: unless-stopped
     init: true
 
-    user: "${KILN_WEB_UID}:${KILN_WEB_GID}"
+    user: "${KILNR_WEB_UID}:${KILNR_WEB_GID}"
 
     group_add:
-      - "${KILN_READERS_GID}"
+      - "${KILNR_READERS_GID}"
 
     environment:
-      KILN_WEB_HOST: "0.0.0.0"
-      KILN_WEB_PORT: "8088"
-      KILN_WEB_STATIC: "/opt/kiln/static"
+      KILNR_WEB_HOST: "0.0.0.0"
+      KILNR_WEB_PORT: "8088"
+      KILNR_WEB_STATIC: "/opt/kilnr/static"
 
     volumes:
       - type: bind
-        source: /var/lib/kiln/builds
-        target: /var/lib/kiln/builds
+        source: /var/lib/kilnr/builds
+        target: /var/lib/kilnr/builds
         read_only: true
 
     read_only: true
@@ -286,10 +286,10 @@ services:
       start_period: 5s
 
     networks:
-      - kiln_proxy
+      - kilnr_proxy
 
 networks:
-  kiln_proxy:
+  kilnr_proxy:
     external: true
     name: ${NETWORK}
 EOF
@@ -324,10 +324,10 @@ echo
 
 CADDY_HASH="$(
     docker exec \
-        -e KILN_PASSWORD="$PASSWORD" \
+        -e KILNR_PASSWORD="$PASSWORD" \
         "$CADDY_CONTAINER" \
         sh -c \
-        'caddy hash-password --plaintext "$KILN_PASSWORD"'
+        'caddy hash-password --plaintext "$KILNR_PASSWORD"'
 )"
 
 unset PASSWORD PASSWORD2
@@ -337,7 +337,7 @@ unset PASSWORD PASSWORD2
 
 
 #
-# Generate the Kiln Caddy block while preserving every existing site.
+# Generate the Kilnr Caddy block while preserving every existing site.
 #
 
 cp "$CADDYFILE" "$TMP_CADDYFILE"
@@ -365,17 +365,17 @@ text = path.read_text(
 )
 
 #
-# Kiln owns only the marked section.
+# Kilnr owns only the marked section.
 #
 
 text = re.sub(
-    r"\n?# BEGIN KILN\n.*?# END KILN\n?",
+    r"\n?# BEGIN KILNR\n.*?# END KILNR\n?",
     "\n",
     text,
     flags=re.DOTALL,
 )
 
-block = f"""# BEGIN KILN
+block = f"""# BEGIN KILNR
 {os.environ['DOMAIN']} {{
     {os.environ['AUTH_DIRECTIVE']} {{
         {os.environ['AUTH_USER']} {os.environ['CADDY_HASH']}
@@ -383,9 +383,9 @@ block = f"""# BEGIN KILN
 
     encode zstd gzip
 
-    reverse_proxy kiln-web:8088
+    reverse_proxy kilnr-web:8088
 }}
-# END KILN
+# END KILNR
 """
 
 path.write_text(
@@ -464,7 +464,7 @@ docker compose \
 # service still contains both:
 #
 #   default
-#   kiln_proxy
+#   kilnr_proxy
 #
 
 MERGED_COMPOSE_JSON="${TMP_DIR}/merged-compose.json"
@@ -523,15 +523,15 @@ PY
 grep -Fxq "default" <<<"$MERGED_CADDY_NETWORKS" \
     || die "generated Compose configuration would disconnect Caddy from its default network"
 
-grep -Fxq "kiln_proxy" <<<"$MERGED_CADDY_NETWORKS" \
-    || die "generated Compose configuration does not attach Caddy to kiln_proxy"
+grep -Fxq "kilnr_proxy" <<<"$MERGED_CADDY_NETWORKS" \
+    || die "generated Compose configuration does not attach Caddy to kilnr_proxy"
 
 
 #
 # Backups
 #
 
-BACKUP_DIR="${KILN_ROOT}/backups/$(date +%Y%m%d-%H%M%S)"
+BACKUP_DIR="${KILNR_ROOT}/backups/$(date +%Y%m%d-%H%M%S)"
 
 mkdir -p "$BACKUP_DIR"
 
@@ -546,10 +546,10 @@ then
         "$BACKUP_DIR/docker-compose.override.yml"
 fi
 
-if [[ -f "$KILN_COMPOSE" ]]
+if [[ -f "$KILNR_COMPOSE" ]]
 then
     cp \
-        "$KILN_COMPOSE" \
+        "$KILNR_COMPOSE" \
         "$BACKUP_DIR/docker-compose.yml"
 fi
 
@@ -570,7 +570,7 @@ install \
     -g root \
     -m 0644 \
     "$TMP_COMPOSE" \
-    "$KILN_COMPOSE"
+    "$KILNR_COMPOSE"
 
 install \
     -o root \
@@ -591,11 +591,11 @@ chmod 0644 "$WEB_CONFIG"
 
 
 #
-# Start Kiln Web first.
+# Start Kilnr Web first.
 #
 
 docker compose \
-    -f "$KILN_COMPOSE" \
+    -f "$KILNR_COMPOSE" \
     up -d --build
 
 
@@ -613,13 +613,13 @@ docker compose \
 
 
 #
-# Wait for kiln-web.
+# Wait for kilnr-web.
 #
 
 for _ in $(seq 1 30)
 do
     HEALTH="$(
-        docker inspect kiln-web \
+        docker inspect kilnr-web \
             --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
             2>/dev/null \
             || true
@@ -633,16 +633,16 @@ done
 
 
 HEALTH="$(
-    docker inspect kiln-web \
+    docker inspect kilnr-web \
         --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}'
 )"
 
 [[ "$HEALTH" == "healthy" ]] \
-    || die "kiln-web did not become healthy (status: $HEALTH)"
+    || die "kilnr-web did not become healthy (status: $HEALTH)"
 
 
 #
-# Verify Kiln's shared network.
+# Verify Kilnr's shared network.
 #
 
 [[ "$(
@@ -652,14 +652,14 @@ HEALTH="$(
     || die "Caddy is not connected to $NETWORK"
 
 [[ "$(
-    docker inspect kiln-web \
+    docker inspect kilnr-web \
         --format "{{if index .NetworkSettings.Networks \"${NETWORK}\"}}yes{{else}}no{{end}}"
 )" == "yes" ]] \
-    || die "kiln-web is not connected to $NETWORK"
+    || die "kilnr-web is not connected to $NETWORK"
 
 
 #
-# Most importantly: verify that every network Caddy had BEFORE Kiln was
+# Most importantly: verify that every network Caddy had BEFORE Kilnr was
 # installed still exists AFTER the Compose recreation.
 #
 
@@ -676,9 +676,9 @@ done
 
 
 echo
-echo "Kiln Web installed."
+echo "Kilnr Web installed."
 echo "URL:      https://${DOMAIN}"
 echo "Username: ${AUTH_USER}"
-echo "Compose:  ${KILN_COMPOSE}"
+echo "Compose:  ${KILNR_COMPOSE}"
 echo "Caddy:    ${CADDYFILE}"
 echo "Backup:   ${BACKUP_DIR}"

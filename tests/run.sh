@@ -27,9 +27,9 @@ do
 done
 
 for unit in \
-    "$ROOT_DIR/systemd/kiln-controller.service" \
-    "$ROOT_DIR/systemd/kiln-queue.path" \
-    "$ROOT_DIR/systemd/kiln-network.service"
+    "$ROOT_DIR/systemd/kilnr-controller.service" \
+    "$ROOT_DIR/systemd/kilnr-queue.path" \
+    "$ROOT_DIR/systemd/kilnr-network.service"
 do
     grep -q \
         '^\[Unit\]$' \

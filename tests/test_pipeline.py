@@ -8,7 +8,7 @@ PIPELINE_PATH = ROOT / "libexec" / "pipeline.py"
 
 
 def load_module():
-    spec = importlib.util.spec_from_file_location("kiln_pipeline", PIPELINE_PATH)
+    spec = importlib.util.spec_from_file_location("kilnr_pipeline", PIPELINE_PATH)
     if spec is None or spec.loader is None:
         raise RuntimeError("cannot load pipeline module")
     module = importlib.util.module_from_spec(spec)
@@ -45,7 +45,7 @@ def parse(obj, *, kind="ci", branch="main", package_manager=None, default_max_pa
         branch=branch,
         package_manager=package_manager,
         default_max_parallel=default_max_parallel,
-        allowed_networks=("none", "kiln-ci"),
+        allowed_networks=("none", "kilnr-ci"),
     )
 
 
@@ -136,13 +136,13 @@ def test_command_validation():
 
 def test_network_defaults_and_allowlist():
     assert parse(base_pipeline())["jobs"]["tests"]["network"] == "none"
-    data = base_pipeline(jobs={"x": base_job(network="kiln-ci")})
-    assert parse(data)["jobs"]["x"]["network"] == "kiln-ci"
+    data = base_pipeline(jobs={"x": base_job(network="kilnr-ci")})
+    assert parse(data)["jobs"]["x"]["network"] == "kilnr-ci"
     expect_error(base_pipeline(jobs={"x": base_job(network="host")}), "network 'host' not allowed")
 
 
 def test_reserved_env_is_rejected():
-    data = base_pipeline(jobs={"x": base_job(env={"KILN_SHA": "fake"})})
+    data = base_pipeline(jobs={"x": base_job(env={"KILNR_SHA": "fake"})})
     expect_error(data, "reserved environment variable")
 
 

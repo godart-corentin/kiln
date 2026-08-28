@@ -1,13 +1,13 @@
 [Unit]
-Description=Kiln CI isolated Docker network
+Description=Kilnr CI isolated Docker network
 Requires=docker.service
 After=docker.service
-Before=kiln-controller.service
+Before=kilnr-controller.service
 PartOf=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/libexec/kiln/network-setup
+ExecStart=/usr/local/libexec/kilnr/network-setup
 RemainAfterExit=yes
 
 [Install]

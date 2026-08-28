@@ -6,8 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-BUILDS = Path("/var/lib/kiln/builds")
-ENQUEUE = "/usr/local/libexec/kiln/enqueue"
+BUILDS = Path("/var/lib/kilnr/builds")
+ENQUEUE = "/usr/local/libexec/kilnr/enqueue"
 RUNUSER = "/usr/sbin/runuser"
 BUILD_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
@@ -15,7 +15,7 @@ OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 
 
 def fail(message):
-    print(f"kiln rerun: {message}", file=sys.stderr)
+    print(f"kilnr rerun: {message}", file=sys.stderr)
     sys.exit(1)
 
 

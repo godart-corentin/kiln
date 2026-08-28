@@ -58,7 +58,7 @@ override = match.group(
 #
 # Regression:
 #
-# Kiln must ADD its proxy network without replacing Caddy's normal
+# Kilnr must ADD its proxy network without replacing Caddy's normal
 # Compose default network.
 #
 
@@ -72,7 +72,7 @@ network_block = re.search(
     \s*
     default:
     \s*
-    kiln_proxy:
+    kilnr_proxy:
     ''',
     override,
     flags=re.VERBOSE,
@@ -80,17 +80,17 @@ network_block = re.search(
 
 if network_block is None:
     fail(
-        "Caddy override must preserve both default and kiln_proxy networks"
+        "Caddy override must preserve both default and kilnr_proxy networks"
     )
 
 
 if "name: ${NETWORK}" not in override:
     fail(
-        "kiln_proxy must reference the configured external network"
+        "kilnr_proxy must reference the configured external network"
     )
 
 
-if "# KILN MANAGED OVERRIDE" not in override:
+if "# KILNR MANAGED OVERRIDE" not in override:
     fail(
         "override ownership marker is missing"
     )
@@ -131,7 +131,7 @@ if 'python3 - "$MERGED_COMPOSE_JSON"' not in text:
 #
 
 expected_backup = (
-    'BACKUP_DIR="${KILN_ROOT}/backups/'
+    'BACKUP_DIR="${KILNR_ROOT}/backups/'
     '$(date +%Y%m%d-%H%M%S)"'
 )
 
@@ -169,7 +169,7 @@ required_fragments = [
     "CADDY_ORIGINAL_NETWORKS",
     "Caddy lost its pre-existing Docker network",
     'grep -Fxq "default"',
-    'grep -Fxq "kiln_proxy"',
+    'grep -Fxq "kilnr_proxy"',
 ]
 
 for fragment in required_fragments:
@@ -192,32 +192,32 @@ compose_match = re.search(
 if compose_match is None:
     fail("cannot find TMP_COMPOSE template")
 
-kiln_compose = compose_match.group("body")
+kilnr_compose = compose_match.group("body")
 required_web_fragments = [
     "build:",
     "context: ${WEB_SOURCE}",
     "dockerfile: Dockerfile",
-    "image: kiln-web:local",
-    'KILN_WEB_STATIC: "/opt/kiln/static"',
-    "source: /var/lib/kiln/builds",
-    "target: /var/lib/kiln/builds",
+    "image: kilnr-web:local",
+    'KILNR_WEB_STATIC: "/opt/kilnr/static"',
+    "source: /var/lib/kilnr/builds",
+    "target: /var/lib/kilnr/builds",
     "read_only: true",
 ]
 for fragment in required_web_fragments:
-    if fragment not in kiln_compose:
+    if fragment not in kilnr_compose:
         fail(f"missing React web runtime fragment: {fragment}")
 
 for forbidden in (
-    "/usr/local/libexec/kiln/web",
+    "/usr/local/libexec/kilnr/web",
     "/var/run/docker.sock",
-    "/etc/kiln/secrets",
+    "/etc/kilnr/secrets",
     "/srv/git",
-    "/var/lib/kiln/queue",
+    "/var/lib/kilnr/queue",
 ):
-    if forbidden in kiln_compose:
-        fail(f"kiln-web compose exposes forbidden path: {forbidden}")
+    if forbidden in kilnr_compose:
+        fail(f"kilnr-web compose exposes forbidden path: {forbidden}")
 
 if "up -d --build" not in text:
-    fail("install-web must build the React image before starting kiln-web")
+    fail("install-web must build the React image before starting kilnr-web")
 
-print("OK install-web: React image keeps kiln-web read-only and isolated")
+print("OK install-web: React image keeps kilnr-web read-only and isolated")

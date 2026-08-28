@@ -89,7 +89,7 @@ export function LogViewer({ buildId, job }: { buildId: string; job: string }) {
 
   return (
     <div className="log-shell">
-      {snapshot.truncated && <div className="notice">Showing the last 2 MiB. Use the Kiln CLI for the complete log.</div>}
+      {snapshot.truncated && <div className="notice">Showing the last 2 MiB. Use the Kilnr CLI for the complete log.</div>}
       <section className="panel log-panel">
         <pre ref={preRef} onScroll={onScroll}>{snapshot.content}</pre>
       </section>

@@ -1,0 +1,12 @@
+[Unit]
+Description=Watch Kilnr CI queue
+After=kilnr-network.service
+Wants=kilnr-network.service
+
+[Path]
+DirectoryNotEmpty=/var/lib/kilnr/queue/incoming
+DirectoryNotEmpty=/var/lib/kilnr/queue/running
+Unit=kilnr-controller.service
+
+[Install]
+WantedBy=multi-user.target

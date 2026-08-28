@@ -9,7 +9,7 @@ EXECUTE_PATH = ROOT / "libexec" / "execute"
 
 
 def load_script():
-    loader = importlib.machinery.SourceFileLoader("kiln_execute_test", str(EXECUTE_PATH))
+    loader = importlib.machinery.SourceFileLoader("kilnr_execute_test", str(EXECUTE_PATH))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
@@ -40,10 +40,10 @@ def test_execution_argv_for_run_uses_generated_read_only_script():
             "tests",
             {"run": ["echo ok"]},
         )
-        assert argv == ["/bin/sh", "/run/kiln/job.sh"]
+        assert argv == ["/bin/sh", "/run/kilnr/job.sh"]
         assert len(mounts) == 1
         mount = mounts[0]
-        assert "dst=/run/kiln/job.sh" in mount
+        assert "dst=/run/kilnr/job.sh" in mount
         assert "readonly" in mount
         generated = build / "commands" / "tests.sh"
         assert generated.is_file()
@@ -97,22 +97,22 @@ def test_public_environment_includes_context_declared_env_and_input_paths():
     input_roots = {"package-linux": Path("/tmp/linux")}
     env = execute.build_public_env(runtime, "tests", job, input_roots)
     assert env["CI"] == "true"
-    assert env["HOME"] == "/run/kiln/home"
-    assert env["XDG_RUNTIME_DIR"] == "/run/kiln/tmp"
-    assert env["TMPDIR"] == "/run/kiln/tmp"
-    assert env["TMP"] == "/run/kiln/tmp"
-    assert env["TEMP"] == "/run/kiln/tmp"
-    assert env["KILN_BUILD_ID"] == "build-1"
-    assert env["KILN_PROJECT"] == "demo"
-    assert env["KILN_SHA"] == "a" * 40
-    assert env["KILN_REF"] == "refs/heads/main"
-    assert env["KILN_JOB_TYPE"] == "ci"
-    assert env["KILN_JOB"] == "tests"
-    assert env["KILN_BRANCH"] == "main"
-    assert "KILN_TAG" not in env
+    assert env["HOME"] == "/run/kilnr/home"
+    assert env["XDG_RUNTIME_DIR"] == "/run/kilnr/tmp"
+    assert env["TMPDIR"] == "/run/kilnr/tmp"
+    assert env["TMP"] == "/run/kilnr/tmp"
+    assert env["TEMP"] == "/run/kilnr/tmp"
+    assert env["KILNR_BUILD_ID"] == "build-1"
+    assert env["KILNR_PROJECT"] == "demo"
+    assert env["KILNR_SHA"] == "a" * 40
+    assert env["KILNR_REF"] == "refs/heads/main"
+    assert env["KILNR_JOB_TYPE"] == "ci"
+    assert env["KILNR_JOB"] == "tests"
+    assert env["KILNR_BRANCH"] == "main"
+    assert "KILNR_TAG" not in env
     assert env["NODE_ENV"] == "test"
     assert "APPLE_ID" not in env
-    assert env["KILN_INPUT_PACKAGE_LINUX"] == "/run/kiln/inputs/package-linux"
+    assert env["KILNR_INPUT_PACKAGE_LINUX"] == "/run/kilnr/inputs/package-linux"
 
 
 def test_input_mounts_are_read_only_and_separate():
@@ -122,8 +122,8 @@ def test_input_mounts_are_read_only_and_separate():
     }
     mounts = execute.build_input_mounts(roots)
     assert len(mounts) == 2
-    assert "src=/build/artifacts/linux,dst=/run/kiln/inputs/linux,readonly" in mounts[0]
-    assert "src=/build/artifacts/windows,dst=/run/kiln/inputs/windows,readonly" in mounts[1]
+    assert "src=/build/artifacts/linux,dst=/run/kilnr/inputs/linux,readonly" in mounts[0]
+    assert "src=/build/artifacts/windows,dst=/run/kilnr/inputs/windows,readonly" in mounts[1]
 
 
 def test_collect_job_artifacts_uses_workspace_not_special_mount():
@@ -147,8 +147,8 @@ def test_secret_wrapper_contains_names_and_paths_but_no_values():
         "APPLE_ID": {"kind": "text", "scope": "release"},
         "CSC_LINK": {"kind": "file", "scope": "release"},
     })
-    assert 'export APPLE_ID="$(cat /run/kiln/secrets/APPLE_ID.value)"' in wrapper
-    assert 'export CSC_LINK="/run/kiln/secrets/CSC_LINK.value"' in wrapper
+    assert 'export APPLE_ID="$(cat /run/kilnr/secrets/APPLE_ID.value)"' in wrapper
+    assert 'export CSC_LINK="/run/kilnr/secrets/CSC_LINK.value"' in wrapper
     assert 'exec "$@"' in wrapper
     assert "actual-secret" not in wrapper
 
@@ -196,11 +196,11 @@ def test_redaction_masks_known_secret_tokens():
 def test_tools_wrapper_keeps_executables_out_of_noexec_tmp():
     wrapper = execute.render_tools_wrapper({"pnpm": "11.15.1"})
 
-    assert 'TOOLS_ROOT="/tmp/kiln-tools"' in wrapper
+    assert 'TOOLS_ROOT="/tmp/kilnr-tools"' in wrapper
     assert 'COREPACK_HOME="$TOOLS_ROOT/corepack"' in wrapper
-    assert 'PATH="/run/kiln/tools/bin:$PATH"' in wrapper
+    assert 'PATH="/run/kilnr/tools/bin:$PATH"' in wrapper
 
-    assert "/tmp/kiln-tools/bin" not in wrapper
+    assert "/tmp/kilnr-tools/bin" not in wrapper
     assert "cat >" not in wrapper
     assert "chmod" not in wrapper
 
@@ -212,19 +212,19 @@ def test_prepare_tools_wrapper_mounts_executable_tools_read_only():
             build,
             "tests",
             {"pnpm": "11.15.1"},
-            ["/bin/sh", "/run/kiln/job.sh"],
+            ["/bin/sh", "/run/kilnr/job.sh"],
         )
 
         assert len(mounts) == 2
 
         assert any(
-            "dst=/run/kiln/tools-wrapper.sh" in mount
+            "dst=/run/kilnr/tools-wrapper.sh" in mount
             and "readonly" in mount
             for mount in mounts
         )
 
         assert any(
-            "dst=/run/kiln/tools" in mount
+            "dst=/run/kilnr/tools" in mount
             and "readonly" in mount
             for mount in mounts
         )
@@ -239,9 +239,9 @@ def test_prepare_tools_wrapper_mounts_executable_tools_read_only():
 
         assert argv == [
             "/bin/sh",
-            "/run/kiln/tools-wrapper.sh",
+            "/run/kilnr/tools-wrapper.sh",
             "/bin/sh",
-            "/run/kiln/job.sh",
+            "/run/kilnr/job.sh",
         ]
 
 def test_runner_security_flags_remain_present():
@@ -257,12 +257,12 @@ def test_runner_security_flags_remain_present():
     ):
         assert token in text, token
     assert '"--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=512m"' in text
-    assert '"--tmpfs", f"/run/kiln/tmp:rw,nosuid,nodev,exec,size=512m,uid={uid},gid={gid},mode=700"' in text
+    assert '"--tmpfs", f"/run/kilnr/tmp:rw,nosuid,nodev,exec,size=512m,uid={uid},gid={gid},mode=700"' in text
     assert (
-        'f"/run/kiln/home:rw,nosuid,nodev,exec,size=512m,uid={uid},gid={gid},mode=700"'
+        'f"/run/kilnr/home:rw,nosuid,nodev,exec,size=512m,uid={uid},gid={gid},mode=700"'
         not in text
     )
-    assert "dst=/run/kiln/home" in text
+    assert "dst=/run/kilnr/home" in text
     assert "/var/run/docker.sock" not in text
     assert "--privileged" not in text
 

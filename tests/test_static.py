@@ -8,11 +8,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 PYTHON_FILES = [
-    ROOT / "bin" / "kiln",
+    ROOT / "bin" / "kilnr",
     ROOT / "libexec" / "controller",
     ROOT / "libexec" / "pipeline.py",
     ROOT / "libexec" / "artifacts.py",
-    ROOT / "libexec" / "kiln_secrets.py",
+    ROOT / "libexec" / "kilnr_secrets.py",
     ROOT / "libexec" / "enqueue",
     ROOT / "libexec" / "execute",
     ROOT / "libexec" / "notify-discord",
@@ -24,7 +24,7 @@ PYTHON_FILES = [
     ROOT / "libexec" / "secret-set-file",
     ROOT / "libexec" / "secret-list",
     ROOT / "libexec" / "secret-delete",
-    ROOT / "web" / "server" / "kiln_web.py",
+    ROOT / "web" / "server" / "kilnr_web.py",
 ]
 
 BASH_FILES = [
@@ -86,7 +86,7 @@ def main():
         if needle in execute_text:
             failed = True
             print(f"FAIL security: execute contains forbidden token {needle!r}", file=sys.stderr)
-    if "src=/etc/kiln/secrets" in execute_text:
+    if "src=/etc/kilnr/secrets" in execute_text:
         failed = True
         print("FAIL security: execute mounts the persistent secrets directory", file=sys.stderr)
     if "dst=/artifacts" in execute_text:

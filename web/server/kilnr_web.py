@@ -10,10 +10,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-BUILDS = Path(os.environ.get("KILN_WEB_BUILDS", "/var/lib/kiln/builds"))
-STATIC_ROOT = Path(os.environ.get("KILN_WEB_STATIC", "/opt/kiln/static"))
-HOST = os.environ.get("KILN_WEB_HOST", "127.0.0.1")
-PORT = int(os.environ.get("KILN_WEB_PORT", "8088"))
+BUILDS = Path(os.environ.get("KILNR_WEB_BUILDS", "/var/lib/kilnr/builds"))
+STATIC_ROOT = Path(os.environ.get("KILNR_WEB_STATIC", "/opt/kilnr/static"))
+HOST = os.environ.get("KILNR_WEB_HOST", "127.0.0.1")
+PORT = int(os.environ.get("KILNR_WEB_PORT", "8088"))
 
 BUILD_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 JOB_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
@@ -223,8 +223,8 @@ def sse_encode(event: str, data: dict) -> bytes:
     return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
 
 
-class KilnHandler(BaseHTTPRequestHandler):
-    server_version = "KilnWeb/2"
+class KilnrHandler(BaseHTTPRequestHandler):
+    server_version = "KilnrWeb/2"
 
     def log_message(self, fmt, *args):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
@@ -438,7 +438,7 @@ class KilnHandler(BaseHTTPRequestHandler):
         self.serve_static(path)
 
     def do_POST(self):
-        self.send_error_json(405, "Kiln Web is read-only")
+        self.send_error_json(405, "Kilnr Web is read-only")
 
     do_PUT = do_POST
     do_PATCH = do_POST
@@ -447,11 +447,11 @@ class KilnHandler(BaseHTTPRequestHandler):
 
 def main():
     if os.geteuid() == 0:
-        print("kiln web: refusing to run as root", file=sys.stderr)
+        print("kilnr web: refusing to run as root", file=sys.stderr)
         return 1
-    server = ThreadingHTTPServer((HOST, PORT), KilnHandler)
+    server = ThreadingHTTPServer((HOST, PORT), KilnrHandler)
     server.daemon_threads = True
-    print(f"kiln web: listening on http://{HOST}:{PORT}", flush=True)
+    print(f"kilnr web: listening on http://{HOST}:{PORT}", flush=True)
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:

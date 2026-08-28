@@ -11,7 +11,7 @@
     "lint": {
       "group": "quality",
       "image": "node:24-bookworm",
-      "network": "kiln-ci",
+      "network": "kilnr-ci",
       "run": [
         "pnpm install --frozen-lockfile",
         "pnpm lint"
@@ -23,7 +23,7 @@
     "tests": {
       "group": "quality",
       "image": "node:24-bookworm",
-      "network": "kiln-ci",
+      "network": "kilnr-ci",
       "run": [
         "pnpm install --frozen-lockfile",
         "pnpm test"
@@ -38,7 +38,7 @@
         "quality"
       ],
       "image": "node:24-bookworm",
-      "network": "kiln-ci",
+      "network": "kilnr-ci",
       "run": [
         "pnpm install --frozen-lockfile",
         "pnpm build"

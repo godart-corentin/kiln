@@ -7,9 +7,9 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import quote
 
-BUILDS = Path("/var/lib/kiln/builds")
-CONFIG_ROOT = Path("/etc/kiln/projects")
-WEB_CONFIG = Path("/etc/kiln/web.json")
+BUILDS = Path("/var/lib/kilnr/builds")
+CONFIG_ROOT = Path("/etc/kilnr/projects")
+WEB_CONFIG = Path("/etc/kilnr/web.json")
 
 ANSI_RE = re.compile(
     r"\x1B(?:\[[0-?]*[ -/]*[@-~]|\].*?(?:\x07|\x1B\\))",
@@ -221,36 +221,36 @@ def main():
     project_config = read_json(CONFIG_ROOT / f"{status['project']}.json")
     webhook_file = project_config.get("discord", {}).get("webhook_file")
     if not webhook_file:
-        print("kiln notify: Discord not configured")
+        print("kilnr notify: Discord not configured")
         return 0
 
     webhook_path = Path(webhook_file)
     if not webhook_path.is_file():
-        print("kiln notify: Discord not configured")
+        print("kilnr notify: Discord not configured")
         return 0
 
     webhook = webhook_path.read_text(encoding="utf-8").strip()
     if not webhook:
-        print("kiln notify: Discord not configured")
+        print("kilnr notify: Discord not configured")
         return 0
 
     body = json.dumps({"content": content}).encode("utf-8")
     request = urllib.request.Request(
         webhook,
         data=body,
-        headers={"Content-Type": "application/json", "User-Agent": "Kiln-CI/1"},
+        headers={"Content-Type": "application/json", "User-Agent": "Kilnr-CI/1"},
         method="POST",
     )
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             if response.status not in (200, 204):
-                print(f"kiln notify: HTTP {response.status}", file=sys.stderr)
+                print(f"kilnr notify: HTTP {response.status}", file=sys.stderr)
                 return 1
     except (urllib.error.URLError, TimeoutError) as exc:
-        print(f"kiln notify: request failed: {exc}", file=sys.stderr)
+        print(f"kilnr notify: request failed: {exc}", file=sys.stderr)
         return 1
 
-    print("kiln notify: notification sent")
+    print("kilnr notify: notification sent")
     return 0
 
 

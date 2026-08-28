@@ -1,6 +1,6 @@
-# Contributing to Kiln
+# Contributing to Kilnr
 
-Kiln is intentionally small infrastructure software built around standard Unix tools.
+Kilnr is intentionally small infrastructure software built around standard Unix tools.
 
 Contributions should preserve that philosophy:
 
@@ -14,7 +14,7 @@ Contributions should preserve that philosophy:
 
 The primary target is Ubuntu 24.04 LTS.
 
-Kiln currently relies on:
+Kilnr currently relies on:
 
 - Python 3 standard library;
 - Bash;
@@ -59,21 +59,21 @@ Extra care is required when modifying:
 
 Repository-controlled values must never become arbitrary host shell commands.
 
-Build containers must never receive the Docker socket or Kiln secrets.
+Build containers must never receive the Docker socket or Kilnr secrets.
 
 ## Project Configuration
 
-Do not add project-specific configuration to the Kiln repository.
+Do not add project-specific configuration to the Kilnr repository.
 
-Kiln itself must remain generic.
+Kilnr itself must remain generic.
 
 Project runtime state belongs under:
 
-    /etc/kiln/
-    /var/lib/kiln/
+    /etc/kilnr/
+    /var/lib/kilnr/
     /srv/git/
 
-These directories contain installation-specific state and must not be copied into the Kiln source repository.
+These directories contain installation-specific state and must not be copied into the Kilnr source repository.
 
 ## Pull Requests
 
@@ -88,7 +88,7 @@ For behavioral changes:
 
 ## Releases
 
-Kiln uses semantic-style version tags such as:
+Kilnr uses semantic-style version tags such as:
 
     v0.1.0
     v0.1.1

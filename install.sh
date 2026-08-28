@@ -5,15 +5,15 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODE="${1:-install}"
 
 die() {
-    echo "kiln install: $*" >&2
+    echo "kilnr install: $*" >&2
     exit 1
 }
 
 [[ "${EUID}" -eq 0 ]] || die "run with sudo"
 [[ "$MODE" == "install" || "$MODE" == "--update" ]] || die "usage: sudo ./install.sh [--update]"
 
-if [[ "$MODE" == "--update" ]] && systemctl is-active --quiet kiln-controller.service 2>/dev/null; then
-    die "a Kiln build is currently running; wait for kiln-controller.service to become inactive"
+if [[ "$MODE" == "--update" ]] && systemctl is-active --quiet kilnr-controller.service 2>/dev/null; then
+    die "a Kilnr build is currently running; wait for kilnr-controller.service to become inactive"
 fi
 
 if [[ -r /etc/os-release ]]; then
@@ -21,7 +21,7 @@ if [[ -r /etc/os-release ]]; then
     source /etc/os-release
     [[ "${ID:-}" == "ubuntu" ]] || die "this installer targets Ubuntu"
     if [[ "${VERSION_ID:-}" != "24.04" ]]; then
-        echo "kiln install: warning: tested on Ubuntu 24.04 LTS, found ${VERSION_ID:-unknown}" >&2
+        echo "kilnr install: warning: tested on Ubuntu 24.04 LTS, found ${VERSION_ID:-unknown}" >&2
     fi
 fi
 
@@ -33,7 +33,7 @@ fi
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
     git make python3 acl curl iptables
 
-command -v docker >/dev/null || die "Docker is not installed. Install Docker first; Kiln will not alter the daemon configuration."
+command -v docker >/dev/null || die "Docker is not installed. Install Docker first; Kilnr will not alter the daemon configuration."
 docker info >/dev/null 2>&1 || die "Docker daemon is not reachable"
 getent group docker >/dev/null || die "Docker group is missing; this installer expects a rootful Docker Engine"
 command -v systemctl >/dev/null || die "systemd is required"
@@ -45,10 +45,10 @@ ensure_group() {
 }
 
 ensure_group git
-ensure_group kiln
-ensure_group kiln-web
-ensure_group kiln-submit
-ensure_group kiln-readers
+ensure_group kilnr
+ensure_group kilnr-web
+ensure_group kilnr-submit
+ensure_group kilnr-readers
 
 ensure_user() {
     local name="$1"
@@ -74,15 +74,15 @@ ensure_user() {
 }
 
 ensure_user git /srv/git /usr/bin/git-shell git
-ensure_user kiln /var/lib/kiln /usr/sbin/nologin kiln
-ensure_user kiln-web /var/lib/kiln-web /usr/sbin/nologin kiln-web
+ensure_user kilnr /var/lib/kilnr /usr/sbin/nologin kilnr
+ensure_user kilnr-web /var/lib/kilnr-web /usr/sbin/nologin kilnr-web
 
-usermod -aG kiln-submit git
-usermod -aG kiln-submit kiln
-usermod -aG kiln-readers kiln-web
+usermod -aG kilnr-submit git
+usermod -aG kilnr-submit kilnr
+usermod -aG kilnr-readers kilnr-web
 
 if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]] && getent passwd "${SUDO_USER}" >/dev/null; then
-    usermod -aG kiln-readers "${SUDO_USER}"
+    usermod -aG kilnr-readers "${SUDO_USER}"
 fi
 
 install -d -o root -g root -m 0755 /srv/git
@@ -93,56 +93,56 @@ fi
 chown git:git /srv/git/.ssh/authorized_keys
 chmod 0600 /srv/git/.ssh/authorized_keys
 
-install -d -o kiln -g kiln-submit -m 0710 /var/lib/kiln
-install -d -o kiln -g kiln-submit -m 0710 /var/lib/kiln/queue
-install -d -o kiln -g kiln-submit -m 3730 \
-    /var/lib/kiln/queue/tmp \
-    /var/lib/kiln/queue/incoming
-install -d -o kiln -g kiln -m 0750 \
-    /var/lib/kiln/queue/running \
-    /var/lib/kiln/builds \
-    /var/lib/kiln/locks
-install -d -o kiln -g kiln -m 0700 \
-    /var/lib/kiln/secret-staging \
-    /var/lib/kiln/job-runtime \
-    /var/lib/kiln/cache
+install -d -o kilnr -g kilnr-submit -m 0710 /var/lib/kilnr
+install -d -o kilnr -g kilnr-submit -m 0710 /var/lib/kilnr/queue
+install -d -o kilnr -g kilnr-submit -m 3730 \
+    /var/lib/kilnr/queue/tmp \
+    /var/lib/kilnr/queue/incoming
+install -d -o kilnr -g kilnr -m 0750 \
+    /var/lib/kilnr/queue/running \
+    /var/lib/kilnr/builds \
+    /var/lib/kilnr/locks
+install -d -o kilnr -g kilnr -m 0700 \
+    /var/lib/kilnr/secret-staging \
+    /var/lib/kilnr/job-runtime \
+    /var/lib/kilnr/cache
 
-install -d -o root -g root -m 0755 /etc/kiln /etc/kiln/projects
-install -d -o root -g kiln -m 0750 /etc/kiln/secrets
-for project_config in /etc/kiln/projects/*.json; do
+install -d -o root -g root -m 0755 /etc/kilnr /etc/kilnr/projects
+install -d -o root -g kilnr -m 0750 /etc/kilnr/secrets
+for project_config in /etc/kilnr/projects/*.json; do
     [[ -e "$project_config" ]] || continue
     project_name="$(basename "$project_config" .json)"
     [[ "$project_name" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]] || continue
-    install -d -o root -g kiln -m 0750 "/etc/kiln/secrets/$project_name"
+    install -d -o root -g kilnr -m 0750 "/etc/kilnr/secrets/$project_name"
 done
-install -d -o root -g root -m 0755 /usr/local/libexec/kiln /usr/local/libexec/kiln/git-hooks
+install -d -o root -g root -m 0755 /usr/local/libexec/kilnr /usr/local/libexec/kilnr/git-hooks
 # Remove the old project module name: it shadows Python stdlib secrets in enqueue.
-rm -f /usr/local/libexec/kiln/secrets.py
+rm -f /usr/local/libexec/kilnr/secrets.py
 
-# CLI readers can traverse Kiln state and read build output, but not queue/secrets.
-setfacl -m g:kiln-readers:--x /var/lib/kiln
-setfacl -m g:kiln-readers:r-x,d:g:kiln-readers:r-x /var/lib/kiln/builds
-setfacl -R -m g:kiln-readers:rX /var/lib/kiln/builds
-setfacl -m u:git:rwx /var/lib/kiln/queue/incoming
-find /var/lib/kiln/builds -type d -exec chmod g-s {} +
+# CLI readers can traverse Kilnr state and read build output, but not queue/secrets.
+setfacl -m g:kilnr-readers:--x /var/lib/kilnr
+setfacl -m g:kilnr-readers:r-x,d:g:kilnr-readers:r-x /var/lib/kilnr/builds
+setfacl -R -m g:kilnr-readers:rX /var/lib/kilnr/builds
+setfacl -m u:git:rwx /var/lib/kilnr/queue/incoming
+find /var/lib/kilnr/builds -type d -exec chmod g-s {} +
 
-install -o root -g root -m 0755 "$ROOT_DIR/bin/kiln" /usr/local/bin/kiln
-install -o root -g root -m 0755 "$ROOT_DIR/web/server/kiln_web.py" /usr/local/libexec/kiln/web
+install -o root -g root -m 0755 "$ROOT_DIR/bin/kilnr" /usr/local/bin/kilnr
+install -o root -g root -m 0755 "$ROOT_DIR/web/server/kilnr_web.py" /usr/local/libexec/kilnr/web
 
-install -d -o root -g root -m 0755 /usr/local/share/kiln
-rm -rf /usr/local/share/kiln/web-src
-cp -R "$ROOT_DIR/web" /usr/local/share/kiln/web-src
+install -d -o root -g root -m 0755 /usr/local/share/kilnr
+rm -rf /usr/local/share/kilnr/web-src
+cp -R "$ROOT_DIR/web" /usr/local/share/kilnr/web-src
 rm -rf \
-    /usr/local/share/kiln/web-src/frontend/node_modules \
-    /usr/local/share/kiln/web-src/frontend/dist \
-    /usr/local/share/kiln/web-src/server/__pycache__
-chown -R root:root /usr/local/share/kiln/web-src
-find /usr/local/share/kiln/web-src -type d -exec chmod 0755 {} +
-find /usr/local/share/kiln/web-src -type f -exec chmod 0644 {} +
-chmod 0755 /usr/local/share/kiln/web-src/server/kiln_web.py
+    /usr/local/share/kilnr/web-src/frontend/node_modules \
+    /usr/local/share/kilnr/web-src/frontend/dist \
+    /usr/local/share/kilnr/web-src/server/__pycache__
+chown -R root:root /usr/local/share/kilnr/web-src
+find /usr/local/share/kilnr/web-src -type d -exec chmod 0755 {} +
+find /usr/local/share/kilnr/web-src -type f -exec chmod 0644 {} +
+chmod 0755 /usr/local/share/kilnr/web-src/server/kilnr_web.py
 
-for module in pipeline.py artifacts.py kiln_secrets.py; do
-    install -o root -g root -m 0644 "$ROOT_DIR/libexec/$module" "/usr/local/libexec/kiln/$module"
+for module in pipeline.py artifacts.py kilnr_secrets.py; do
+    install -o root -g root -m 0644 "$ROOT_DIR/libexec/$module" "/usr/local/libexec/kilnr/$module"
 done
 
 for name in \
@@ -151,59 +151,59 @@ for name in \
     secret-set secret-set-file secret-list secret-delete \
     git-key-add network-setup network-teardown
 do
-    install -o root -g root -m 0755 "$ROOT_DIR/libexec/$name" "/usr/local/libexec/kiln/$name"
+    install -o root -g root -m 0755 "$ROOT_DIR/libexec/$name" "/usr/local/libexec/kilnr/$name"
 done
 
 install -o root -g root -m 0755 \
     "$ROOT_DIR/libexec/git-hooks/post-receive" \
-    /usr/local/libexec/kiln/git-hooks/post-receive
+    /usr/local/libexec/kilnr/git-hooks/post-receive
 
-if [[ ! -f /etc/kiln/defaults.json ]]; then
-    install -o root -g root -m 0644 "$ROOT_DIR/config/defaults.json" /etc/kiln/defaults.json
+if [[ ! -f /etc/kilnr/defaults.json ]]; then
+    install -o root -g root -m 0644 "$ROOT_DIR/config/defaults.json" /etc/kilnr/defaults.json
 fi
 
 # Configure the isolated CI subnet once. Override on first install with:
-#   sudo KILN_CI_SUBNET=172.31.50.0/24 ./install.sh
-if [[ ! -f /etc/kiln/network.env ]]; then
-    SUBNET="${KILN_CI_SUBNET:-172.30.0.0/24}"
+#   sudo KILNR_CI_SUBNET=172.31.50.0/24 ./install.sh
+if [[ ! -f /etc/kilnr/network.env ]]; then
+    SUBNET="${KILNR_CI_SUBNET:-172.30.0.0/24}"
     GATEWAY="$(
         /usr/bin/python3 - "$SUBNET" <<'PY'
 import ipaddress, sys
 net = ipaddress.ip_network(sys.argv[1], strict=True)
 if net.version != 4 or net.prefixlen > 28:
-    raise SystemExit("Kiln CI subnet must be an IPv4 network of /28 or larger")
+    raise SystemExit("Kilnr CI subnet must be an IPv4 network of /28 or larger")
 print(next(net.hosts()))
 PY
     )"
 
-    cat >/etc/kiln/network.env <<EOF
-NETWORK=kiln-ci
-BRIDGE=kiln0
+    cat >/etc/kilnr/network.env <<EOF
+NETWORK=kilnr-ci
+BRIDGE=kilnr0
 SUBNET=${SUBNET}
 GATEWAY=${GATEWAY}
 EOF
-    chown root:root /etc/kiln/network.env
-    chmod 0644 /etc/kiln/network.env
+    chown root:root /etc/kilnr/network.env
+    chmod 0644 /etc/kilnr/network.env
 fi
 
-for unit in kiln-controller.service kiln-queue.path kiln-network.service; do
+for unit in kilnr-controller.service kilnr-queue.path kilnr-network.service; do
     install -o root -g root -m 0644 "$ROOT_DIR/systemd/$unit" "/etc/systemd/system/$unit"
 done
 
 systemctl daemon-reload
-systemctl enable --now kiln-network.service
-systemctl enable --now kiln-queue.path
+systemctl enable --now kilnr-network.service
+systemctl enable --now kilnr-queue.path
 
 echo
-echo "Kiln core installed."
+echo "Kilnr core installed."
 echo
 echo "Next:"
-echo "  kiln git-key add"
-echo "  kiln project create my_app"
+echo "  kilnr git-key add"
+echo "  kilnr project create my_app"
 echo
 if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
-    echo "Your user '${SUDO_USER}' was added to kiln-readers."
-    echo "Reconnect your shell before using 'kiln status' if the group is not visible yet."
+    echo "Your user '${SUDO_USER}' was added to kilnr-readers."
+    echo "Reconnect your shell before using 'kilnr status' if the group is not visible yet."
 fi
 echo "Optional web UI:"
-echo "  sudo ./install-web.sh kiln.example.com"
+echo "  sudo ./install-web.sh kilnr.example.com"

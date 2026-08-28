@@ -23,8 +23,8 @@ def load_python(path, name):
     return module
 
 
-pipeline = load_python(PIPELINE_PATH, "kiln_pipeline_cache_test")
-execute = load_python(EXECUTE_PATH, "kiln_execute_cache_test")
+pipeline = load_python(PIPELINE_PATH, "kilnr_pipeline_cache_test")
+execute = load_python(EXECUTE_PATH, "kilnr_execute_cache_test")
 
 
 def parse_job(job, *, kind="ci", package_manager="pnpm@11.15.1"):
@@ -38,7 +38,7 @@ def parse_job(job, *, kind="ci", package_manager="pnpm@11.15.1"):
         json.dumps(data).encode(),
         kind=kind,
         package_manager=package_manager,
-        allowed_networks=("none", "kiln-ci"),
+        allowed_networks=("none", "kilnr-ci"),
     )
     return result["jobs"]["tests"]
 
@@ -118,7 +118,7 @@ def test_cache_root_is_project_job_type_tool_and_version_scoped():
         assert branch_mounts != other_project
         mount = branch_mounts[0]
         assert "/review_desk/ci/pnpm/11.15.1" in mount
-        assert "dst=/run/kiln/cache/pnpm" in mount
+        assert "dst=/run/kilnr/cache/pnpm" in mount
         assert "readonly" not in mount
 
 
@@ -139,14 +139,14 @@ def test_public_env_configures_pnpm_store_only_when_cache_enabled():
     )
     uncached = execute.build_public_env(runtime, "tests", {"env": {}}, {})
 
-    assert cached["npm_config_store_dir"] == "/run/kiln/cache/pnpm"
+    assert cached["npm_config_store_dir"] == "/run/kilnr/cache/pnpm"
     assert "npm_config_store_dir" not in uncached
 
 
 def test_install_declares_private_cache_root():
     text = (ROOT / "install.sh").read_text(encoding="utf-8")
-    assert "/var/lib/kiln/cache" in text
-    assert "install -d -o kiln -g kiln -m 0700" in text
+    assert "/var/lib/kilnr/cache" in text
+    assert "install -d -o kilnr -g kilnr -m 0700" in text
 
 
 def main():

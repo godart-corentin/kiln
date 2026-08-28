@@ -25,7 +25,7 @@ export function BuildsPage() {
 
   return (
     <>
-      <div className="hero"><div><h1>Builds</h1><div className="muted">Latest Kiln activity</div></div></div>
+      <div className="hero"><div><h1>Builds</h1><div className="muted">Latest Kilnr activity</div></div></div>
       {error && <section className="panel empty">{error}</section>}
       {builds && builds.length === 0 && <section className="panel empty">No builds yet.</section>}
       {builds && builds.length > 0 && (

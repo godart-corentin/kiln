@@ -1,8 +1,8 @@
 # Changelog
 
-All notable changes to Kiln will be documented in this file.
+All notable changes to Kilnr will be documented in this file.
 
-Kiln is currently experimental 0.x software.
+Kilnr is currently experimental 0.x software.
 
 ## Unreleased
 
@@ -29,7 +29,7 @@ Kiln is currently experimental 0.x software.
 - Dedicated CI Docker network with private and LAN egress blocking.
 - Persistent build logs and artifacts.
 - Discord build notifications.
-- `kiln status`, `kiln logs`, `kiln watch` and `kiln rerun`.
+- `kilnr status`, `kilnr logs`, `kilnr watch` and `kilnr rerun`.
 - Project create, delete and Discord webhook management.
-- Optional read-only Kiln Web interface behind Caddy.
+- Optional read-only Kilnr Web interface behind Caddy.
 - Release jobs triggered only from initial `vX.Y.Z` tag creation.

@@ -19,8 +19,8 @@ def load_script(name, path):
     return module
 
 
-controller = load_script("kiln_controller_test", CONTROLLER_PATH)
-enqueue = load_script("kiln_enqueue_test", ENQUEUE_PATH)
+controller = load_script("kilnr_controller_test", CONTROLLER_PATH)
+enqueue = load_script("kilnr_enqueue_test", ENQUEUE_PATH)
 
 
 def run(*args, cwd=None):
@@ -74,8 +74,8 @@ def make_repo(files):
     work.mkdir()
 
     run("git", "init", "-b", "main", cwd=work)
-    run("git", "config", "user.email", "kiln-test@example.invalid", cwd=work)
-    run("git", "config", "user.name", "Kiln Test", cwd=work)
+    run("git", "config", "user.email", "kilnr-test@example.invalid", cwd=work)
+    run("git", "config", "user.name", "Kilnr Test", cwd=work)
 
     for relative, content in files.items():
         path = work / relative
@@ -103,7 +103,7 @@ def base_config(repo):
             "memory": "768m",
             "pids_limit": 256,
             "timeout_seconds": 1800,
-            "allowed_networks": ["none", "kiln-ci"],
+            "allowed_networks": ["none", "kilnr-ci"],
         },
         "release": {
             "tag_pattern": r"^v[0-9]+\.[0-9]+\.[0-9]+$",
@@ -124,7 +124,7 @@ def ci_job(sha, branch):
         "type": "ci",
         "event": "push",
         "branch": branch,
-        "pin_ref": "refs/kiln/jobs/20260826T000000000000Z-demo-abcdef0-12345678",
+        "pin_ref": "refs/kilnr/jobs/20260826T000000000000Z-demo-abcdef0-12345678",
     }
 
 
@@ -155,17 +155,17 @@ def test_enqueue_classifies_every_branch_as_ci():
 
 def test_branch_pipeline_selection():
     temp, _work, repo, sha = make_repo({
-        ".kiln/pipelines/main.json": pipeline(["main"], "main-check"),
-        ".kiln/pipelines/features.json": pipeline(["feature/*"], "feature-check"),
+        ".kilnr/pipelines/main.json": pipeline(["main"], "main-check"),
+        ".kilnr/pipelines/features.json": pipeline(["feature/*"], "feature-check"),
     })
     try:
         cfg = base_config(repo)
         path, selected = controller.select_pipeline(ci_job(sha, "main"), cfg)
-        assert_equal(path, ".kiln/pipelines/main.json", "main pipeline")
+        assert_equal(path, ".kilnr/pipelines/main.json", "main pipeline")
         assert "main-check" in selected["jobs"]
 
         path, selected = controller.select_pipeline(ci_job(sha, "feature/login"), cfg)
-        assert_equal(path, ".kiln/pipelines/features.json", "feature pipeline")
+        assert_equal(path, ".kilnr/pipelines/features.json", "feature pipeline")
         assert "feature-check" in selected["jobs"]
 
         result = controller.select_pipeline(ci_job(sha, "docs"), cfg)
@@ -176,10 +176,10 @@ def test_branch_pipeline_selection():
 
 def test_selection_uses_exact_job_sha():
     temp, work, repo, old_sha = make_repo({
-        ".kiln/pipelines/main.json": pipeline(["main"], "old-job"),
+        ".kilnr/pipelines/main.json": pipeline(["main"], "old-job"),
     })
     try:
-        write_json(work / ".kiln/pipelines/main.json", pipeline(["main"], "new-job"))
+        write_json(work / ".kilnr/pipelines/main.json", pipeline(["main"], "new-job"))
         run("git", "add", ".", cwd=work)
         run("git", "commit", "-m", "new pipeline", cwd=work)
         new_sha = git_output("git", "rev-parse", "HEAD", cwd=work)
@@ -197,14 +197,14 @@ def test_selection_uses_exact_job_sha():
 
 def test_multiple_branch_pipeline_matches_fail():
     temp, _work, repo, sha = make_repo({
-        ".kiln/pipelines/all.json": pipeline(["feature/*"], "all-check"),
-        ".kiln/pipelines/special.json": pipeline(["feature/special"], "special-check"),
+        ".kilnr/pipelines/all.json": pipeline(["feature/*"], "all-check"),
+        ".kilnr/pipelines/special.json": pipeline(["feature/special"], "special-check"),
     })
     try:
         cfg = base_config(repo)
         try:
             controller.select_pipeline(ci_job(sha, "feature/special"), cfg)
-        except controller.KilnError as exc:
+        except controller.KilnrError as exc:
             if "matches multiple CI pipelines" not in str(exc):
                 raise AssertionError(f"unexpected error: {exc}")
         else:
@@ -215,13 +215,13 @@ def test_multiple_branch_pipeline_matches_fail():
 
 def test_release_uses_only_fixed_release_pipeline():
     temp, _work, repo, sha = make_repo({
-        ".kiln/pipelines/main.json": pipeline(["main"], "main-check"),
-        ".kiln/release.json": release_pipeline("release-job"),
+        ".kilnr/pipelines/main.json": pipeline(["main"], "main-check"),
+        ".kilnr/release.json": release_pipeline("release-job"),
     })
     try:
         cfg = base_config(repo)
         path, selected = controller.select_pipeline(release_job(sha), cfg)
-        assert_equal(path, ".kiln/release.json", "release pipeline")
+        assert_equal(path, ".kilnr/release.json", "release pipeline")
         assert "release-job" in selected["jobs"]
         assert "main-check" not in selected["jobs"]
     finally:
@@ -230,14 +230,14 @@ def test_release_uses_only_fixed_release_pipeline():
 
 def test_release_requires_fixed_release_pipeline():
     temp, _work, repo, sha = make_repo({
-        ".kiln/pipelines/main.json": pipeline(["main"], "main-check"),
+        ".kilnr/pipelines/main.json": pipeline(["main"], "main-check"),
     })
     try:
         cfg = base_config(repo)
         try:
             controller.select_pipeline(release_job(sha), cfg)
-        except controller.KilnError as exc:
-            if ".kiln/release.json" not in str(exc):
+        except controller.KilnrError as exc:
+            if ".kilnr/release.json" not in str(exc):
                 raise AssertionError(f"unexpected error: {exc}")
         else:
             raise AssertionError("expected missing release pipeline failure")
@@ -247,11 +247,11 @@ def test_release_requires_fixed_release_pipeline():
 
 def test_legacy_pipeline_is_not_used():
     temp, _work, repo, sha = make_repo({
-        ".kiln/pipeline.json": pipeline(["main"], "legacy"),
+        ".kilnr/pipeline.json": pipeline(["main"], "legacy"),
     })
     try:
         cfg = base_config(repo)
-        cfg["pipeline"] = ".kiln/pipeline.json"
+        cfg["pipeline"] = ".kilnr/pipeline.json"
         cfg["ci"] = {"branches": ["main"]}
         result = controller.select_pipeline(ci_job(sha, "main"), cfg)
         assert_equal(result, None, "legacy pipeline must be ignored")
@@ -264,7 +264,7 @@ def test_tools_auto_resolution_uses_package_json_from_exact_sha():
     pipeline_data = pipeline(["main"], "tests")
     pipeline_data["jobs"]["tests"]["tools"] = ["pnpm"]
     temp, work, repo, old_sha = make_repo({
-        ".kiln/pipelines/main.json": pipeline_data,
+        ".kilnr/pipelines/main.json": pipeline_data,
         "package.json": {"packageManager": "pnpm@11.15.1"},
     })
     try:

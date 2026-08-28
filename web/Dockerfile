@@ -6,7 +6,7 @@ COPY frontend/ ./
 RUN npm run build
 
 FROM python:3.12-alpine
-WORKDIR /opt/kiln
-COPY server/kiln_web.py /opt/kiln/web
-COPY --from=frontend /src/dist /opt/kiln/static
-CMD ["python3", "/opt/kiln/web"]
+WORKDIR /opt/kilnr
+COPY server/kilnr_web.py /opt/kilnr/web
+COPY --from=frontend /src/dist /opt/kilnr/static
+CMD ["python3", "/opt/kilnr/web"]

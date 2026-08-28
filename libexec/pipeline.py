@@ -75,7 +75,7 @@ def _validate_env(value, *, job_name: str):
     for key, item in value.items():
         if not isinstance(key, str) or not ENV_RE.fullmatch(key):
             fail(f"job {job_name!r}: invalid environment variable name {key!r}")
-        if key.startswith("KILN_"):
+        if key.startswith("KILNR_"):
             fail(f"job {job_name!r}: reserved environment variable {key!r}")
         if not isinstance(item, str) or "\x00" in item:
             fail(f"job {job_name!r}: invalid environment variable {key!r}")
@@ -173,7 +173,7 @@ def _validate_secrets(value, *, job_name: str):
     )
     seen = set()
     for name in names:
-        if not ENV_RE.fullmatch(name) or name.startswith("KILN_"):
+        if not ENV_RE.fullmatch(name) or name.startswith("KILNR_"):
             fail(f"job {job_name!r}: invalid secret name {name!r}")
         if name in seen:
             fail(f"job {job_name!r}: duplicate secret {name!r}")
@@ -368,7 +368,7 @@ def load_pipeline_bytes(
     kind: str,
     branch: str | None = None,
     default_max_parallel: int = 3,
-    allowed_networks=("none", "kiln-ci"),
+    allowed_networks=("none", "kilnr-ci"),
     package_manager: str | None = None,
 ) -> dict:
     try:

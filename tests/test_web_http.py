@@ -8,8 +8,8 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / 'web' / 'server' / 'kiln_web.py'
-spec = importlib.util.spec_from_file_location('kiln_web_http', MODULE_PATH)
+MODULE_PATH = ROOT / 'web' / 'server' / 'kilnr_web.py'
+spec = importlib.util.spec_from_file_location('kilnr_web_http', MODULE_PATH)
 web = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(web)
 
@@ -50,7 +50,7 @@ def main():
         web.STATIC_ROOT = static
         web.SSE_POLL_SECONDS = 0.01
 
-        server = ThreadingHTTPServer(('127.0.0.1', 0), web.KilnHandler)
+        server = ThreadingHTTPServer(('127.0.0.1', 0), web.KilnrHandler)
         server.daemon_threads = True
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()

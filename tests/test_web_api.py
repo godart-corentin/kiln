@@ -5,9 +5,9 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / 'web' / 'server' / 'kiln_web.py'
+MODULE_PATH = ROOT / 'web' / 'server' / 'kilnr_web.py'
 
-spec = importlib.util.spec_from_file_location('kiln_web', MODULE_PATH)
+spec = importlib.util.spec_from_file_location('kilnr_web', MODULE_PATH)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 

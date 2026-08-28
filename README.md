@@ -1,6 +1,6 @@
-# Kiln
+# Kilnr
 
-Kiln is a small self-hosted CI system for Ubuntu 24.04 LTS built from standard Unix tools:
+Kilnr is a small self-hosted CI system for Ubuntu 24.04 LTS built from standard Unix tools:
 
 ```text
 git push
@@ -18,18 +18,18 @@ GNU Make DAG
 ephemeral Docker containers
 ```
 
-Kiln deliberately has no Jenkins/GitLab/GitHub Actions server, no database, and no Docker socket inside build containers.
+Kilnr deliberately has no Jenkins/GitLab/GitHub Actions server, no database, and no Docker socket inside build containers.
 
 > [!WARNING]
-> Kiln is experimental 0.x software. It executes repository-controlled code and integrates with Docker, systemd, Git, and host firewall rules. Review the security model before using it with untrusted repositories or exposing Kiln services publicly.
+> Kilnr is experimental 0.x software. It executes repository-controlled code and integrates with Docker, systemd, Git, and host firewall rules. Review the security model before using it with untrusted repositories or exposing Kilnr services publicly.
 
 ## Current features
 
 - Bare Git repositories over SSH using a restricted `git` account
 - Exact-SHA builds; branch names are never used for checkout
-- Atomic filesystem queue with pinned Git refs under `refs/kiln/jobs/`
-- Branch pipelines from `.kiln/pipelines/*.json`
-- Release pipelines from `.kiln/release.json`
+- Atomic filesystem queue with pinned Git refs under `refs/kilnr/jobs/`
+- Branch pipelines from `.kilnr/pipelines/*.json`
+- Release pipelines from `.kilnr/release.json`
 - GNU Make dependency graph with groups, `needs`, and parallel jobs
 - `run`, `script`, and low-level `command` execution modes
 - Managed `pnpm` via `tools`, resolved from the exact-SHA `package.json`
@@ -52,40 +52,40 @@ Kiln deliberately has no Jenkins/GitLab/GitHub Actions server, no database, and 
 - Internet access during installation for Ubuntu packages
 - For the optional web UI: an existing Caddy container managed with Docker Compose
 
-Kiln **does not install or globally reconfigure Docker**.
+Kilnr **does not install or globally reconfigure Docker**.
 
 ## Installation
 
 ```bash
-git clone git@github.com:godart-corentin/kiln.git kiln
-cd kiln
+git clone git@github.com:godart-corentin/kilnr.git kilnr
+cd kilnr
 sudo ./install.sh
 ```
 
 If `172.30.0.0/24` conflicts with an existing Docker/LAN subnet, choose another subnet on first install:
 
 ```bash
-sudo KILN_CI_SUBNET=172.31.50.0/24 ./install.sh
+sudo KILNR_CI_SUBNET=172.31.50.0/24 ./install.sh
 ```
 
 Then check the installation:
 
 ```bash
-kiln doctor
+kilnr doctor
 ```
 
 ## SSH key and project creation
 
-Add a development key on the Kiln server:
+Add a development key on the Kilnr server:
 
 ```bash
-kiln git-key add
+kilnr git-key add
 ```
 
 Create a project:
 
 ```bash
-kiln project create my_app
+kilnr project create my_app
 ```
 
 This creates the bare repository, project configuration, secret directory, post-receive hook, and exact-SHA pin namespace.
@@ -93,19 +93,19 @@ This creates the bare repository, project configuration, secret directory, post-
 On the development machine:
 
 ```bash
-git remote add home git@kiln-server:/srv/git/my_app.git
+git remote add home git@kilnr-server:/srv/git/my_app.git
 git push home main
 ```
 
 Configure Discord if wanted:
 
 ```bash
-kiln project webhook set my_app
+kilnr project webhook set my_app
 ```
 
 ## Branch pipelines
 
-Branch CI lives in `.kiln/pipelines/*.json`. A branch push scans the pipeline files from the exact pushed SHA. Zero matching pipelines means no build; exactly one runs; multiple matches are a configuration error.
+Branch CI lives in `.kilnr/pipelines/*.json`. A branch push scans the pipeline files from the exact pushed SHA. Zero matching pipelines means no build; exactly one runs; multiple matches are a configuration error.
 
 Example:
 
@@ -121,7 +121,7 @@ Example:
     "tests": {
       "group": "quality",
       "image": "node:24-bookworm",
-      "network": "kiln-ci",
+      "network": "kilnr-ci",
       "tools": ["pnpm"],
       "cache": ["pnpm"],
       "run": [
@@ -132,7 +132,7 @@ Example:
     "build": {
       "group": "quality",
       "image": "node:24-bookworm",
-      "network": "kiln-ci",
+      "network": "kilnr-ci",
       "tools": ["pnpm"],
       "cache": ["pnpm"],
       "run": [
@@ -150,7 +150,7 @@ Example:
 `network` may be:
 
 - `none`: no network
-- `kiln-ci`: public Internet egress while private/LAN/host ranges are blocked
+- `kilnr-ci`: public Internet egress while private/LAN/host ranges are blocked
 
 The project cannot request arbitrary Docker flags.
 
@@ -187,7 +187,7 @@ A group is only an organizational and dependency shortcut; it does not execute i
 
 ## Managed tools
 
-Kiln currently supports `pnpm` as a managed tool.
+Kilnr currently supports `pnpm` as a managed tool.
 
 Automatic version resolution:
 
@@ -209,7 +209,7 @@ An explicit version is also supported:
 }
 ```
 
-Kiln exposes the managed binary inside the container; pipeline commands simply use `pnpm`.
+Kilnr exposes the managed binary inside the container; pipeline commands simply use `pnpm`.
 
 ## Persistent pnpm cache
 
@@ -228,16 +228,16 @@ pnpm install --frozen-lockfile
 
 but pnpm can reuse packages already present in the warm store instead of downloading them again.
 
-Kiln stores the cache under:
+Kilnr stores the cache under:
 
 ```text
-/var/lib/kiln/cache/<project>/<job-type>/pnpm/<version>/
+/var/lib/kilnr/cache/<project>/<job-type>/pnpm/<version>/
 ```
 
 and mounts only that store into the job at:
 
 ```text
-/run/kiln/cache/pnpm
+/run/kilnr/cache/pnpm
 ```
 
 Important properties:
@@ -269,11 +269,11 @@ A dependent job can consume artifacts from producer jobs with `inputs`:
 "inputs": ["package-linux"]
 ```
 
-Producer artifacts are exposed read-only under `/run/kiln/inputs/<producer>` with a matching `KILN_INPUT_<PRODUCER>` environment variable.
+Producer artifacts are exposed read-only under `/run/kilnr/inputs/<producer>` with a matching `KILNR_INPUT_<PRODUCER>` environment variable.
 
 ## Release pipelines and secrets
 
-Release jobs live only in `.kiln/release.json`. Branch CI never loads that file.
+Release jobs live only in `.kilnr/release.json`. Branch CI never loads that file.
 
 A SemVer-style tag such as `v1.5.0` creates a release build:
 
@@ -285,51 +285,51 @@ git push home v1.5.0
 Project-scoped release secrets can be managed with:
 
 ```bash
-kiln secret set my_app APPLE_ID
-kiln secret set-file my_app WIN_CSC_LINK ./certificate.pfx
-kiln secret list my_app
-kiln secret delete my_app APPLE_ID
+kilnr secret set my_app APPLE_ID
+kilnr secret set-file my_app WIN_CSC_LINK ./certificate.pfx
+kilnr secret list my_app
+kilnr secret delete my_app APPLE_ID
 ```
 
 Secrets are release-only by default, mounted read-only for the requesting job, omitted from Docker environment metadata, and known textual values are redacted from persisted logs.
 
 ## Automatic job environment
 
-Kiln provides non-secret metadata including:
+Kilnr provides non-secret metadata including:
 
 ```text
-KILN_BUILD_ID
-KILN_PROJECT
-KILN_SHA
-KILN_REF
-KILN_JOB_TYPE
-KILN_JOB
-KILN_BRANCH   # branch CI
-KILN_TAG      # release
+KILNR_BUILD_ID
+KILNR_PROJECT
+KILNR_SHA
+KILNR_REF
+KILNR_JOB_TYPE
+KILNR_JOB
+KILNR_BRANCH   # branch CI
+KILNR_TAG      # release
 ```
 
-User-defined environment variables can be added with `env`, but `KILN_*` is reserved.
+User-defined environment variables can be added with `env`, but `KILNR_*` is reserved.
 
 ## CLI
 
 Typical commands:
 
 ```bash
-kiln status latest
-kiln logs latest
-kiln logs latest tests
-kiln watch latest pipeline
-kiln rerun latest
+kilnr status latest
+kilnr logs latest
+kilnr logs latest tests
+kilnr watch latest pipeline
+kilnr rerun latest
 
-kiln project create foo
-kiln project webhook set foo
-kiln project delete foo
+kilnr project create foo
+kilnr project webhook set foo
+kilnr project delete foo
 
-kiln secret list foo
-kiln doctor
+kilnr secret list foo
+kilnr doctor
 ```
 
-`kiln rerun` creates a new CI build for the same SHA. Release builds are not rerun by that command.
+`kilnr rerun` creates a new CI build for the same SHA. Release builds are not rerun by that command.
 
 ## Filesystem layout
 
@@ -337,14 +337,14 @@ kiln doctor
 /srv/git/
   <project>.git
 
-/etc/kiln/
+/etc/kilnr/
   defaults.json
   network.env
   projects/
   secrets/
   web.json
 
-/var/lib/kiln/
+/var/lib/kilnr/
   queue/
     tmp/
     incoming/
@@ -380,7 +380,7 @@ kiln doctor
 
 ### Controller
 
-`kiln` has no login shell. It reads repositories through ACLs and can write only Kiln's pinned job refs inside each bare repository.
+`kilnr` has no login shell. It reads repositories through ACLs and can write only Kilnr's pinned job refs inside each bare repository.
 
 ### Build containers
 
@@ -395,21 +395,21 @@ Build code does **not** receive:
 - privileged mode
 - unrelated project secrets or caches
 
-`/tmp` is a no-exec tmpfs. Executable temporary work uses `/run/kiln/tmp`, while `HOME=/run/kiln/home` is an ephemeral disk-backed per-job directory removed after the job.
+`/tmp` is a no-exec tmpfs. Executable temporary work uses `/run/kilnr/tmp`, while `HOME=/run/kilnr/home` is an ephemeral disk-backed per-job directory removed after the job.
 
 ### Network
 
-`kiln-ci` uses a dedicated Docker bridge. Host firewall rules block private, loopback, link-local, carrier-grade NAT, multicast, and reserved IPv4 destinations while permitting public Internet package access.
+`kilnr-ci` uses a dedicated Docker bridge. Host firewall rules block private, loopback, link-local, carrier-grade NAT, multicast, and reserved IPv4 destinations while permitting public Internet package access.
 
 ## Read-only web UI
 
-Kiln Web is optional and runs separately behind an existing Dockerized Caddy deployment:
+Kilnr Web is optional and runs separately behind an existing Dockerized Caddy deployment:
 
 ```bash
-sudo ./install-web.sh kiln.example.com
+sudo ./install-web.sh kilnr.example.com
 ```
 
-It publishes no Kiln Web host port, uses the shared internal `kiln-proxy` network, and keeps Basic Auth at Caddy. The web process is read-only against Kiln build state.
+It publishes no Kilnr Web host port, uses the shared internal `kilnr-proxy` network, and keeps Basic Auth at Caddy. The web process is read-only against Kilnr build state.
 
 Remove only the web layer with:
 
@@ -417,13 +417,13 @@ Remove only the web layer with:
 sudo ./uninstall-web.sh
 ```
 
-## Updating Kiln
+## Updating Kilnr
 
 ```bash
 git pull --ff-only
 sudo ./update.sh
 ./tests/run.sh
-kiln doctor
+kilnr doctor
 ```
 
 The update path preserves repositories, project configuration, secrets, caches, and build history.
@@ -434,7 +434,7 @@ The update path preserves repositories, project configuration, secrets, caches, 
 sudo ./uninstall.sh
 ```
 
-The uninstaller removes the installed programs, systemd units, and CI network/firewall setup while deliberately preserving persistent Kiln data under `/srv/git`, `/var/lib/kiln`, and `/etc/kiln`.
+The uninstaller removes the installed programs, systemd units, and CI network/firewall setup while deliberately preserving persistent Kilnr data under `/srv/git`, `/var/lib/kilnr`, and `/etc/kilnr`.
 
 ## Development
 
@@ -444,4 +444,4 @@ Run the repository test suite with:
 ./tests/run.sh
 ```
 
-Kiln intentionally contains no GitHub Actions workflow. GitHub is used for source hosting and versioning only; Kiln itself performs CI.
+Kilnr intentionally contains no GitHub Actions workflow. GitHub is used for source hosting and versioning only; Kilnr itself performs CI.
