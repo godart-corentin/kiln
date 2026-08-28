@@ -436,6 +436,14 @@ sudo ./uninstall.sh
 
 The uninstaller removes the installed programs, systemd units, and CI network/firewall setup while deliberately preserving persistent Kilnr data under `/srv/git`, `/var/lib/kilnr`, and `/etc/kilnr`.
 
+To permanently remove all repositories, build history, configuration, secrets, optional web data, and Kilnr system identities, use the explicit purge mode:
+
+```bash
+sudo ./uninstall.sh --purge
+```
+
+The command displays the destructive paths and requires typing `PURGE`. For unattended environments, `--purge --yes` skips that confirmation. The shared `git` system account is preserved because it may be used independently of Kilnr.
+
 ## Development
 
 Run the repository test suite with:

@@ -6,6 +6,8 @@ Kilnr is currently experimental 0.x software.
 
 ## Unreleased
 
+- Add an explicit, confirmation-protected `uninstall.sh --purge` mode for removing all Kilnr data and system identities.
+
 ### Added
 
 ### Changed
