@@ -62,6 +62,8 @@ cd kilnr
 sudo ./install.sh
 ```
 
+The installer adds the user who invoked `sudo` to the `kilnr-readers` group. Log out and reconnect before using `kilnr status` so the new group membership takes effect. If the installer was run directly as `root`, add the intended CLI user manually with `sudo usermod -aG kilnr-readers <username>`.
+
 If `172.30.0.0/24` conflicts with an existing Docker/LAN subnet, choose another subnet on first install:
 
 ```bash
