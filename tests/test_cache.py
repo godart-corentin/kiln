@@ -139,8 +139,9 @@ def test_public_env_configures_pnpm_store_only_when_cache_enabled():
     )
     uncached = execute.build_public_env(runtime, "tests", {"env": {}}, {})
 
-    assert cached["npm_config_store_dir"] == "/run/kilnr/cache/pnpm"
-    assert "npm_config_store_dir" not in uncached
+    assert cached["PNPM_CONFIG_STORE_DIR"] == "/run/kilnr/cache/pnpm"
+    assert "PNPM_CONFIG_STORE_DIR" not in uncached
+    assert "npm_config_store_dir" not in cached
 
 
 def test_install_declares_private_cache_root():

@@ -131,7 +131,7 @@ def render_tools_wrapper(tools):
     lines = [
         "#!/bin/sh",
         "set -eu",
-        'TOOLS_ROOT="/tmp/kilnr-tools"',
+        'TOOLS_ROOT="/run/kilnr/tmp/tools"',
         'mkdir -p "$TOOLS_ROOT/corepack"',
         'export COREPACK_HOME="$TOOLS_ROOT/corepack"',
         'export COREPACK_DEFAULT_TO_LATEST=0',
@@ -252,7 +252,7 @@ def build_public_env(runtime, job_id, job, input_roots):
         env["KILNR_TAG"] = tag
     env.update(job.get("env", {}))
     if "pnpm" in job.get("cache", {}):
-        env["npm_config_store_dir"] = "/run/kilnr/cache/pnpm"
+        env["PNPM_CONFIG_STORE_DIR"] = "/run/kilnr/cache/pnpm"
     env.setdefault("XDG_RUNTIME_DIR", "/run/kilnr/tmp")
     env.setdefault("TMPDIR", "/run/kilnr/tmp")
     env.setdefault("TMP", "/run/kilnr/tmp")

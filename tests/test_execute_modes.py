@@ -206,14 +206,14 @@ def test_redaction_masks_known_secret_tokens():
     assert "line2" not in redacted
     assert "***" in redacted
 
-def test_tools_wrapper_keeps_executables_out_of_noexec_tmp():
+def test_tools_wrapper_keeps_corepack_home_on_executable_tmpfs():
     wrapper = execute.render_tools_wrapper({"pnpm": "11.15.1"})
 
-    assert 'TOOLS_ROOT="/tmp/kilnr-tools"' in wrapper
+    assert 'TOOLS_ROOT="/run/kilnr/tmp/tools"' in wrapper
     assert 'COREPACK_HOME="$TOOLS_ROOT/corepack"' in wrapper
     assert 'PATH="/run/kilnr/tools/bin:$PATH"' in wrapper
 
-    assert "/tmp/kilnr-tools/bin" not in wrapper
+    assert 'TOOLS_ROOT="/tmp/' not in wrapper
     assert "cat >" not in wrapper
     assert "chmod" not in wrapper
 
@@ -294,7 +294,7 @@ def main():
         test_secret_wrapper_contains_names_and_paths_but_no_values,
         test_prepare_secret_stage_is_outside_builds_and_contains_only_requested_files,
         test_redaction_masks_known_secret_tokens,
-        test_tools_wrapper_keeps_executables_out_of_noexec_tmp,
+        test_tools_wrapper_keeps_corepack_home_on_executable_tmpfs,
         test_prepare_tools_wrapper_mounts_executable_tools_read_only,
         test_runner_security_flags_remain_present,
     ]
