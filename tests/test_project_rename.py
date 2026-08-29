@@ -63,7 +63,17 @@ def make_roots(root):
         locks,
     ):
         path.mkdir(parents=True, exist_ok=True)
-    return rename.Roots(git=git, config=config, secrets=secrets, state=state, locks=locks)
+    managed_hook = root / "managed-post-receive"
+    shutil.copyfile(ROOT / "libexec" / "git-hooks" / "post-receive", managed_hook)
+    managed_hook.chmod(0o755)
+    return rename.Roots(
+        git=git,
+        config=config,
+        secrets=secrets,
+        state=state,
+        locks=locks,
+        managed_hook=managed_hook,
+    )
 
 
 def make_project(roots, project=OLD):
@@ -96,7 +106,7 @@ def make_project(roots, project=OLD):
     os.chmod(repo / "refs" / "kilnr", 0o770)
     os.chmod(repo / "refs" / "kilnr" / "jobs", 0o770)
     hook = repo / "hooks" / "post-receive"
-    hook.symlink_to(ROOT / "libexec" / "git-hooks" / "post-receive")
+    hook.symlink_to(roots.managed_hook)
     webhook = roots.secrets / f"{project}.discord-webhook"
     webhook.write_text("https://discord.invalid/token\n", encoding="utf-8")
     os.chmod(webhook, 0o640)
@@ -642,6 +652,7 @@ def test_inventory_rejects_a_symlinked_managed_root():
             secrets=roots.secrets,
             state=roots.state,
             locks=roots.locks,
+            managed_hook=roots.managed_hook,
         )
         expect_rename_error(
             lambda: rename.inventory_rename(linked_roots, OLD, NEW),
@@ -1378,8 +1389,10 @@ def test_inventory_rejects_writable_owning_group_in_each_managed_ref_acl():
 def test_inventory_rejects_untrusted_managed_hook_owner():
     with tempfile.TemporaryDirectory() as tmp:
         roots, _, _, _ = make_fixture(Path(tmp))
-        hook = ROOT / "libexec" / "git-hooks" / "post-receive"
+        hook = roots.managed_hook
         original_lstat = rename._lstat
+        original_hook_owner = rename._managed_hook_owner
+        trusted_owner = original_hook_owner(roots)
 
         def different_owner(path, description):
             info = original_lstat(path, description)
@@ -1390,11 +1403,34 @@ def test_inventory_rejects_untrusted_managed_hook_owner():
             return os.stat_result(fields)
 
         rename._lstat = different_owner
+        rename._managed_hook_owner = lambda selected: trusted_owner
         try:
             expect_rename_error(
                 lambda: rename.inventory_rename(roots, OLD, NEW),
                 "post-receive hook ownership",
             )
+        finally:
+            rename._lstat = original_lstat
+            rename._managed_hook_owner = original_hook_owner
+
+
+def test_fixture_inventory_does_not_depend_on_checkout_hook_mode():
+    with tempfile.TemporaryDirectory() as tmp:
+        roots, _, _, _ = make_fixture(Path(tmp))
+        checkout_hook = ROOT / "libexec" / "git-hooks" / "post-receive"
+        original_lstat = rename._lstat
+
+        def writable_checkout_hook(path, description):
+            info = original_lstat(path, description)
+            if Path(path) != checkout_hook:
+                return info
+            fields = list(info)
+            fields[0] |= 0o020
+            return os.stat_result(fields)
+
+        rename._lstat = writable_checkout_hook
+        try:
+            rename.inventory_rename(roots, OLD, NEW)
         finally:
             rename._lstat = original_lstat
 
@@ -1438,9 +1474,10 @@ def test_production_repository_policy_rejects_a_kilnr_owned_repository():
                 repo,
                 {},
                 managed_hook_owner=(
-                    (ROOT / "libexec" / "git-hooks" / "post-receive").stat().st_uid,
-                    (ROOT / "libexec" / "git-hooks" / "post-receive").stat().st_gid,
+                    roots.managed_hook.stat().st_uid,
+                    roots.managed_hook.stat().st_gid,
                 ),
+                managed_hook_path=roots.managed_hook,
                 kilnr_acl_uid=None,
                 expected_owner=kilnr_owner,
                 kilnr_identity=None,
@@ -1467,9 +1504,10 @@ def test_production_repository_policy_rejects_kilnr_writable_refs_heads():
                     repo,
                     {},
                     managed_hook_owner=(
-                        (ROOT / "libexec" / "git-hooks" / "post-receive").stat().st_uid,
-                        (ROOT / "libexec" / "git-hooks" / "post-receive").stat().st_gid,
+                        roots.managed_hook.stat().st_uid,
+                        roots.managed_hook.stat().st_gid,
                     ),
+                    managed_hook_path=roots.managed_hook,
                     kilnr_acl_uid=None,
                     expected_owner=(repo.stat().st_uid, repo.stat().st_gid),
                     kilnr_identity=(kilnr_uid, frozenset({os.getgid()})),
@@ -2666,6 +2704,7 @@ def run_mutator_rename_race(script_name, *, rollback):
                 secrets=roots.secrets,
                 state=roots.state,
                 locks=roots.locks,
+                managed_hook=roots.managed_hook,
             )
             rename_child.send("lock-attempt")
             try:
@@ -2787,6 +2826,7 @@ def main():
         test_inventory_rejects_extra_named_group_in_each_managed_ref_acl,
         test_inventory_rejects_writable_owning_group_in_each_managed_ref_acl,
         test_inventory_rejects_untrusted_managed_hook_owner,
+        test_fixture_inventory_does_not_depend_on_checkout_hook_mode,
         test_production_managed_hook_policy_requires_root_root,
         test_inventory_rejects_inconsistent_managed_ownership,
         test_production_repository_policy_rejects_a_kilnr_owned_repository,

@@ -71,6 +71,7 @@ class Roots:
     secrets: Path
     state: Path
     locks: Path
+    managed_hook: Optional[Path] = None
 
 
 @dataclass(frozen=True)
@@ -309,9 +310,14 @@ def _production_policy(roots):
 def _managed_hook_owner(roots):
     if roots == DEFAULT_ROOTS:
         return (0, 0)
-    entrypoint = Path(__file__).resolve()
-    info = _require_regular(entrypoint, "project rename entry point")
+    info = _require_regular(_managed_hook_path(roots), "managed post-receive hook")
     return (info.st_uid, info.st_gid)
+
+
+def _managed_hook_path(roots):
+    if roots.managed_hook is not None:
+        return roots.managed_hook
+    return Path(__file__).resolve().with_name("git-hooks") / "post-receive"
 
 
 def _kilnr_acl_uid(roots):
@@ -648,6 +654,7 @@ def _validate_bare_repository(
     facts,
     *,
     managed_hook_owner,
+    managed_hook_path,
     kilnr_acl_uid,
     expected_owner=None,
     kilnr_identity=None,
@@ -738,7 +745,7 @@ def _validate_bare_repository(
     if parser.get("gc", "packrefs", fallback="").lower() != "false":
         _fail(f"repository gc.packRefs is invalid: {path}")
 
-    expected_hook = Path(__file__).resolve().with_name("git-hooks") / "post-receive"
+    expected_hook = managed_hook_path
     hook = path / "hooks" / "post-receive"
     if not hook.is_symlink():
         _fail(f"repository post-receive hook is not the managed symlink: {hook}")
@@ -1450,6 +1457,7 @@ def inventory_rename(roots, old, new, *, _allowed_build_entries=()):
         managed_hook_owner=(
             _managed_hook_owner(roots) if production is None else production.root
         ),
+        managed_hook_path=_managed_hook_path(roots),
         kilnr_acl_uid=kilnr_acl_uid,
         expected_owner=repository_expected_owner,
         kilnr_identity=kilnr_identity,
