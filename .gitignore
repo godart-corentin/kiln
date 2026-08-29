@@ -43,3 +43,6 @@ authorized_keys
 runtime/
 web.json
 docker-compose.override.yml
+
+# Local Git worktrees
+.worktrees/
