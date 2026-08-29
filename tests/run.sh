@@ -17,6 +17,9 @@ for test in \
     test_cache.py \
     test_artifacts.py \
     test_secrets.py \
+    test_project_lock.py \
+    test_project_lifecycle_locks.py \
+    test_project_rename.py \
     test_import_shadowing.py \
     test_branch_pipelines.py \
     test_controller_dag.py \

@@ -8,7 +8,15 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+LIBEXEC_ROOT = str(Path(__file__).resolve().parent)
+if LIBEXEC_ROOT not in sys.path:
+    sys.path.insert(0, LIBEXEC_ROOT)
+
+from kilnr_project_lock import project_locks, validate_project_name
+
 CONFIG_ROOT = Path("/etc/kilnr/projects")
+GIT_ROOT = Path("/srv/git")
+PROJECT_LOCK_ROOT = Path("/var/lib/kilnr/locks/projects")
 QUEUE_TMP = Path("/var/lib/kilnr/queue/tmp")
 QUEUE_INCOMING = Path("/var/lib/kilnr/queue/incoming")
 
@@ -65,7 +73,7 @@ def load_project(project: str) -> dict:
     if config.get("project") != project:
         fail(f"project name mismatch in {path}")
 
-    expected_repo = Path("/srv/git") / f"{project}.git"
+    expected_repo = GIT_ROOT / f"{project}.git"
     repository = config.get("repository")
     if repository != str(expected_repo):
         fail(f"repository path must be {expected_repo}")
@@ -152,21 +160,53 @@ def atomic_publish(job_id: str, job: dict) -> Path:
 
     return final_path
 
-def main() -> int:
-    if len(sys.argv) != 5:
-        print("usage: enqueue <project> <old-oid> <new-oid> <ref>", file=sys.stderr)
-        return 2
 
-    project, old_oid, new_oid, ref = sys.argv[1:]
-    validate_oid("old oid", old_oid)
-    validate_oid("new oid", new_oid)
+def resolve_receive_repository():
+    result = subprocess.run(
+        ["/usr/bin/git", "rev-parse", "--absolute-git-dir"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        message = result.stderr.strip() or result.stdout.strip()
+        fail(f"cannot determine receive repository: {message}")
+    repository = Path(result.stdout.strip())
+    try:
+        repository = repository.resolve(strict=True)
+        git_root = GIT_ROOT.resolve(strict=True)
+    except OSError as exc:
+        fail(f"cannot resolve receive repository: {exc}")
+    if repository.parent != git_root or not repository.name.endswith(".git"):
+        fail(f"receive repository is outside {git_root}: {repository}")
+    project = repository.name[:-4]
+    try:
+        validate_project_name(project)
+    except ValueError as exc:
+        fail(str(exc))
+    return project, repository
 
+
+def enqueue_locked(
+    project: str,
+    old_oid: str,
+    new_oid: str,
+    ref: str,
+    *,
+    repository=None,
+):
     config = load_project(project)
+    repo = Path(config["repository"])
+    if repository is not None and repo != repository:
+        fail(
+            "receive repository identity changed while locked: "
+            f"expected {repository}, configured {repo}"
+        )
     job_type = classify(config, old_oid, new_oid, ref)
     if job_type is None:
         return 0
 
-    repo = Path(config["repository"])
     if not repo.is_dir():
         fail(f"repository does not exist: {repo}")
 
@@ -212,6 +252,43 @@ def main() -> int:
             )
 
     print(job_id)
+    return 0
+
+
+def enqueue_receive(old_oid: str, new_oid: str, ref: str) -> int:
+    while True:
+        project, repository = resolve_receive_repository()
+        with project_locks(PROJECT_LOCK_ROOT, [project], exclusive=False):
+            locked_project, locked_repository = resolve_receive_repository()
+            if (locked_project, locked_repository) != (project, repository):
+                continue
+            return enqueue_locked(
+                project,
+                old_oid,
+                new_oid,
+                ref,
+                repository=repository,
+            )
+
+
+def main() -> int:
+    if len(sys.argv) != 5:
+        print("usage: enqueue <project> <old-oid> <new-oid> <ref>", file=sys.stderr)
+        return 2
+
+    project_or_receive, old_oid, new_oid, ref = sys.argv[1:]
+    validate_oid("old oid", old_oid)
+    validate_oid("new oid", new_oid)
+
+    if project_or_receive == "--receive":
+        return enqueue_receive(old_oid, new_oid, ref)
+    try:
+        project = validate_project_name(project_or_receive)
+    except ValueError as exc:
+        fail(str(exc))
+    with project_locks(PROJECT_LOCK_ROOT, [project], exclusive=False):
+        enqueue_locked(project, old_oid, new_oid, ref)
+    # project lock released
     return 0
 
 

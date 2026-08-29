@@ -105,6 +105,36 @@ Configure Discord if wanted:
 kilnr project webhook set my_app
 ```
 
+## Renaming a project
+
+Rename Kilnr-owned project state on the server, then update each development
+machine that pushes to it:
+
+```bash
+kilnr project rename old_name new_name
+git remote set-url home git@SERVER:/srv/git/new_name.git
+```
+
+The rename is refused before mutation if the destination already exists or the
+source has a job in the incoming or running queue. On success Kilnr moves the
+bare repository, configuration, webhooks, release secrets, cache, and completed
+builds. Completed build IDs and Kilnr-generated metadata are updated to the new
+project name; matching internal job-pin refs move with them. This includes
+terminal preparation failures, whose build directories can legitimately omit
+`runtime.json` and `pipeline.mk`.
+
+Checked-out sources, user command output, historical logs, artifacts,
+repository objects, cache payloads, and secret values are left byte-for-byte
+unchanged. The command uses one transaction: if commit or verification fails,
+Kilnr rolls completed changes back in reverse order while both project names
+remain locked. If an inverse operation also fails, the error identifies the
+remaining paths that require administrator recovery.
+
+Project lifecycle coordination uses pre-provisioned `root:kilnr-submit` mode
+`0660` entries under `/var/lib/kilnr/locks/projects`. The lock namespace and
+its state-directory ancestors are root-owned and non-writable by submitter
+identities, so an active inode lock cannot be bypassed by replacing a pathname.
+
 ## Branch pipelines
 
 Branch CI lives in `.kilnr/pipelines/*.json`. A branch push scans the pipeline files from the exact pushed SHA. Zero matching pipelines means no build; exactly one runs; multiple matches are a configuration error.
@@ -325,6 +355,7 @@ kilnr rerun latest
 
 kilnr project create foo
 kilnr project webhook set foo
+kilnr project rename foo bar
 kilnr project delete foo
 
 kilnr secret list foo
@@ -354,13 +385,15 @@ kilnr doctor
   builds/
     <build-id>/
       job.json
-      runtime.json
       status.json
-      pipeline.mk
+      runtime.json        # present after runtime resolution
+      pipeline.mk         # present after Makefile generation
       src/
       work/
       logs/
       artifacts/
+      commands/
+      runtime/            # optional generated tool runtime
   cache/
     <project>/
       ci/
@@ -369,9 +402,12 @@ kilnr doctor
       release/
         pnpm/
           <version>/
+  controller-home/
   job-runtime/
   secret-staging/
   locks/
+    projects/
+      <project>.lock
 ```
 
 ## Security model

@@ -93,19 +93,32 @@ fi
 chown git:git /srv/git/.ssh/authorized_keys
 chmod 0600 /srv/git/.ssh/authorized_keys
 
-install -d -o kilnr -g kilnr-submit -m 0710 /var/lib/kilnr
+/usr/bin/python3 "$ROOT_DIR/libexec/kilnr_project_lock.py" \
+    --provision-production-namespace /var/lib/kilnr
 install -d -o kilnr -g kilnr-submit -m 0710 /var/lib/kilnr/queue
 install -d -o kilnr -g kilnr-submit -m 3730 \
     /var/lib/kilnr/queue/tmp \
     /var/lib/kilnr/queue/incoming
 install -d -o kilnr -g kilnr -m 0750 \
     /var/lib/kilnr/queue/running \
-    /var/lib/kilnr/builds \
-    /var/lib/kilnr/locks
+    /var/lib/kilnr/builds
 install -d -o kilnr -g kilnr -m 0700 \
+    /var/lib/kilnr/controller-home \
     /var/lib/kilnr/secret-staging \
     /var/lib/kilnr/job-runtime \
     /var/lib/kilnr/cache
+
+controller_lock="/var/lib/kilnr/locks/controller.lock"
+if [[ -e "$controller_lock" || -L "$controller_lock" ]]; then
+    [[ -f "$controller_lock" && ! -L "$controller_lock" ]] \
+        || die "unsafe controller lock entry: $controller_lock"
+    [[ "$(stat -c '%h' "$controller_lock")" == "1" ]] \
+        || die "controller lock entry has unexpected links: $controller_lock"
+    chown root:kilnr "$controller_lock"
+    chmod 0660 "$controller_lock"
+else
+    install -o root -g kilnr -m 0660 /dev/null "$controller_lock"
+fi
 
 install -d -o root -g root -m 0755 /etc/kilnr /etc/kilnr/projects
 install -d -o root -g kilnr -m 0750 /etc/kilnr/secrets
@@ -113,6 +126,17 @@ for project_config in /etc/kilnr/projects/*.json; do
     [[ -e "$project_config" ]] || continue
     project_name="$(basename "$project_config" .json)"
     [[ "$project_name" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]] || continue
+    project_lock="/var/lib/kilnr/locks/projects/${project_name}.lock"
+    if [[ -e "$project_lock" || -L "$project_lock" ]]; then
+        [[ -f "$project_lock" && ! -L "$project_lock" ]] \
+            || die "unsafe project lock entry: $project_lock"
+        [[ "$(stat -c '%h' "$project_lock")" == "1" ]] \
+            || die "project lock entry has unexpected links: $project_lock"
+        chown root:kilnr-submit "$project_lock"
+        chmod 0660 "$project_lock"
+    else
+        install -o root -g kilnr-submit -m 0660 /dev/null "$project_lock"
+    fi
     install -d -o root -g kilnr -m 0750 "/etc/kilnr/secrets/$project_name"
 done
 install -d -o root -g root -m 0755 /usr/local/libexec/kilnr /usr/local/libexec/kilnr/git-hooks
@@ -120,7 +144,6 @@ install -d -o root -g root -m 0755 /usr/local/libexec/kilnr /usr/local/libexec/k
 rm -f /usr/local/libexec/kilnr/secrets.py
 
 # CLI readers can traverse Kilnr state and read build output, but not queue/secrets.
-setfacl -m g:kilnr-readers:--x /var/lib/kilnr
 setfacl -m g:kilnr-readers:r-x,d:g:kilnr-readers:r-x /var/lib/kilnr/builds
 setfacl -R -m g:kilnr-readers:rX /var/lib/kilnr/builds
 setfacl -m u:git:rwx /var/lib/kilnr/queue/incoming
@@ -141,13 +164,13 @@ find /usr/local/share/kilnr/web-src -type d -exec chmod 0755 {} +
 find /usr/local/share/kilnr/web-src -type f -exec chmod 0644 {} +
 chmod 0755 /usr/local/share/kilnr/web-src/server/kilnr_web.py
 
-for module in pipeline.py artifacts.py kilnr_secrets.py; do
+for module in pipeline.py artifacts.py kilnr_secrets.py kilnr_project_lock.py; do
     install -o root -g root -m 0644 "$ROOT_DIR/libexec/$module" "/usr/local/libexec/kilnr/$module"
 done
 
 for name in \
     controller enqueue execute notify-discord rerun doctor \
-    project-create project-delete project-webhook-set \
+    project-create project-delete project-lock-run project-rename project-webhook-set \
     secret-set secret-set-file secret-list secret-delete \
     git-key-add network-setup network-teardown
 do

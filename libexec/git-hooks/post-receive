@@ -1,20 +1,14 @@
 #!/usr/bin/env bash
 set -u
 
-ENQUEUE="/usr/local/libexec/kilnr/enqueue"
-
-repo="$(
-    /usr/bin/git rev-parse --absolute-git-dir 2>/dev/null
-)" || {
-    echo "kilnr: cannot determine repository" >&2
+hook_path="$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null)" || {
+    echo "kilnr: cannot resolve managed post-receive hook" >&2
     exit 0
 }
-
-repo_name="$(basename -- "$repo")"
-project="${repo_name%.git}"
-
-if [[ ! "$project" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]]; then
-    echo "kilnr: invalid repository/project name: $project" >&2
+libexec_root="$(dirname -- "$(dirname -- "$hook_path")")"
+ENQUEUE="${libexec_root}/enqueue"
+if [[ ! -x "$ENQUEUE" ]]; then
+    echo "kilnr: managed enqueue helper is missing: $ENQUEUE" >&2
     exit 0
 fi
 
@@ -26,7 +20,7 @@ do
 
     output="$(
         "$ENQUEUE" \
-            "$project" \
+            --receive \
             "$old_sha" \
             "$new_sha" \
             "$ref" \
