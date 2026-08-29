@@ -10,7 +10,9 @@ from pathlib import Path
 
 BUILDS = Path("/var/lib/kilnr/builds")
 PROJECT_CREATE = "/usr/local/libexec/kilnr/project-create"
+PROJECT_LOCK_RUN = "/usr/local/libexec/kilnr/project-lock-run"
 PROJECT_DELETE = "/usr/local/libexec/kilnr/project-delete"
+PROJECT_RENAME = "/usr/local/libexec/kilnr/project-rename"
 PROJECT_WEBHOOK_SET = "/usr/local/libexec/kilnr/project-webhook-set"
 RERUN = "/usr/local/libexec/kilnr/rerun"
 GIT_KEY_ADD = "/usr/local/libexec/kilnr/git-key-add"
@@ -298,6 +300,7 @@ def usage():
 
   kilnr project create <project-name>
   kilnr project delete <project-name>
+  kilnr project rename <old-name> <new-name>
   kilnr project webhook set <project-name>
 
   kilnr secret set <project> <name>
@@ -316,9 +319,18 @@ def main():
     args = sys.argv[1:]
 
     if len(args) == 3 and args[:2] == ["project", "create"]:
-        return privileged_command(PROJECT_CREATE, args[2])
+        return privileged_command(
+            PROJECT_LOCK_RUN,
+            "--exclusive",
+            args[2],
+            "--",
+            PROJECT_CREATE,
+            args[2],
+        )
     if len(args) == 3 and args[:2] == ["project", "delete"]:
         return project_delete(args[2])
+    if len(args) == 4 and args[:2] == ["project", "rename"]:
+        return privileged_command(PROJECT_RENAME, args[2], args[3])
     if len(args) == 4 and args[:3] == ["project", "webhook", "set"]:
         return project_webhook_set(args[3])
     if len(args) == 4 and args[:2] == ["secret", "set"]:

@@ -751,7 +751,7 @@ def main():
     if user != "kilnr":
         fail(f"controller must run as kilnr, not {user}")
 
-    fd = os.open(LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o640)
+    fd = os.open(LOCK_FILE, os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW)
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

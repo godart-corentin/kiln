@@ -80,6 +80,24 @@ def test_basic_normalization():
     assert job["run"] == ["true"]
 
 
+def test_checked_in_ci_pipeline_parses_with_dogfooding_values():
+    result = pipeline.load_pipeline_bytes(
+        (ROOT / ".kilnr" / "pipelines" / "ci.json").read_bytes(),
+        kind="ci",
+        branch="feature/dogfood",
+        default_max_parallel=3,
+        allowed_networks=("none", "kilnr-ci"),
+    )
+
+    assert result["schema"] == 1
+    assert result["max_parallel"] == 1
+    assert result["trigger"] == {"type": "branch", "branches": ["*"]}
+    assert list(result["jobs"]) == ["tests"]
+    assert result["jobs"]["tests"]["image"] == "python:3.12-bookworm"
+    assert result["jobs"]["tests"]["network"] == "none"
+    assert result["jobs"]["tests"]["run"] == ["./tests/run.sh"]
+
+
 def test_schema_must_be_one():
     expect_error(base_pipeline(schema=2), "pipeline.schema must be 1")
 
@@ -358,6 +376,7 @@ def test_tools_reject_unknown_tools_invalid_versions_and_duplicates():
 def main():
     tests = [
         test_basic_normalization,
+        test_checked_in_ci_pipeline_parses_with_dogfooding_values,
         test_schema_must_be_one,
         test_jobs_must_be_non_empty_object,
         test_max_parallel_validation,

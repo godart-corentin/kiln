@@ -10,7 +10,7 @@ User=kilnr
 Group=kilnr
 SupplementaryGroups=docker
 WorkingDirectory=/var/lib/kilnr
-Environment=HOME=/var/lib/kilnr
+Environment=HOME=/var/lib/kilnr/controller-home
 ExecStart=/usr/local/libexec/kilnr/controller
 UMask=0027
 TimeoutStartSec=infinity
