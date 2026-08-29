@@ -171,6 +171,93 @@ def child_holds_lock(root, name, *, exclusive):
     return process, release, ready
 
 
+def child_namespace_mutation_outcome(root):
+    context = multiprocessing.get_context("fork")
+    receive, send = context.Pipe(duplex=False)
+    root = Path(root)
+    submitter_gid = root.stat().st_gid
+
+    def attempt():
+        try:
+            if os.geteuid() == 0:
+                submitter_uid = 54001
+                os.setgroups([submitter_gid])
+                os.setgid(submitter_gid)
+                os.setuid(submitter_uid)
+
+            outcomes = []
+            for operation in (
+                lambda: (root / "demo.lock").unlink(),
+                lambda: os.open(
+                    root / "replacement",
+                    os.O_RDWR | os.O_CREAT | os.O_EXCL,
+                    0o660,
+                ),
+            ):
+                try:
+                    result = operation()
+                except PermissionError as exc:
+                    outcomes.append(exc.errno)
+                else:
+                    if isinstance(result, int):
+                        os.close(result)
+                    outcomes.append(None)
+            send.send((os.geteuid(), tuple(outcomes)))
+        finally:
+            send.close()
+
+    process = context.Process(target=attempt)
+    process.start()
+    send.close()
+    assert receive.poll(5), "submitter mutation attempt did not report"
+    outcome = receive.recv()
+    process.join(timeout=5)
+    receive.close()
+    assert process.exitcode == 0, process.exitcode
+    return outcome
+
+
+def child_namespace_replacement_outcome(state, lock_parent, root):
+    context = multiprocessing.get_context("fork")
+    receive, send = context.Pipe(duplex=False)
+    state = Path(state)
+    lock_parent = Path(lock_parent)
+    root = Path(root)
+    submitter_gid = root.stat().st_gid
+
+    def attempt():
+        try:
+            if os.geteuid() == 0:
+                os.setgroups([submitter_gid])
+                os.setgid(submitter_gid)
+                os.setuid(54001)
+
+            outcomes = []
+            for source, destination in (
+                (root, lock_parent / "projects-replaced"),
+                (lock_parent, state / "locks-replaced"),
+            ):
+                try:
+                    source.rename(destination)
+                except PermissionError as exc:
+                    outcomes.append(exc.errno)
+                else:
+                    outcomes.append(None)
+            send.send((os.geteuid(), tuple(outcomes)))
+        finally:
+            send.close()
+
+    process = context.Process(target=attempt)
+    process.start()
+    send.close()
+    assert receive.poll(5), "submitter replacement attempt did not report"
+    outcome = receive.recv()
+    process.join(timeout=5)
+    receive.close()
+    assert process.exitcode == 0, process.exitcode
+    return outcome
+
+
 def test_project_name_validation_accepts_boundaries():
     accepted = ["a", "z9", "demo_name-2", "a" * 63]
     for name in accepted:
@@ -373,18 +460,10 @@ def test_submitter_cannot_unlink_recreate_or_split_a_held_lock_inode():
         root.chmod(0o550)
         with locks.project_locks(root, ["demo"], exclusive=True):
             original_inode = (root / "demo.lock").stat().st_ino
-            try:
-                (root / "demo.lock").unlink()
-            except PermissionError:
-                pass
-            else:
-                raise AssertionError("non-writable lock namespace allowed unlink")
-            try:
-                os.open(root / "replacement", os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o660)
-            except PermissionError:
-                pass
-            else:
-                raise AssertionError("non-writable lock namespace allowed recreation")
+            submitter_uid, outcomes = child_namespace_mutation_outcome(root)
+            if os.geteuid() == 0:
+                assert submitter_uid != 0, "mutation probe retained root privileges"
+            assert outcomes == (errno.EACCES, errno.EACCES), outcomes
             assert (root / "demo.lock").stat().st_ino == original_inode
             assert child_can_lock(root, "demo", exclusive=False) is False
 
@@ -401,18 +480,14 @@ def test_submitter_cannot_replace_project_lock_namespace_through_ancestors():
         lock_parent.chmod(0o550)
         root.chmod(0o550)
         with locks.project_locks(root, ["demo"], exclusive=True):
-            try:
-                root.rename(lock_parent / "projects-replaced")
-            except PermissionError:
-                pass
-            else:
-                raise AssertionError("writable lock parent allowed namespace replacement")
-            try:
-                lock_parent.rename(state / "locks-replaced")
-            except PermissionError:
-                pass
-            else:
-                raise AssertionError("writable state root allowed lock-parent replacement")
+            submitter_uid, outcomes = child_namespace_replacement_outcome(
+                state,
+                lock_parent,
+                root,
+            )
+            if os.geteuid() == 0:
+                assert submitter_uid != 0, "replacement probe retained root privileges"
+            assert outcomes == (errno.EACCES, errno.EACCES), outcomes
             assert child_can_lock(root, "demo", exclusive=False) is False
 
 
