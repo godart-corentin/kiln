@@ -25,6 +25,7 @@ PYTHON_FILES = [
     ROOT / "libexec" / "project-rename",
     ROOT / "libexec" / "project-webhook-set",
     ROOT / "libexec" / "kilnr_project_lock.py",
+    ROOT / "libexec" / "kilnr_permissions.py",
     ROOT / "libexec" / "git-key-add",
     ROOT / "libexec" / "secret-set",
     ROOT / "libexec" / "secret-set-file",
@@ -82,7 +83,7 @@ def check_project_rename_installation():
     install = (ROOT / "install.sh").read_text(encoding="utf-8")
     assert (
         "for module in pipeline.py artifacts.py kilnr_secrets.py "
-        "kilnr_project_lock.py; do"
+        "kilnr_project_lock.py kilnr_permissions.py; do"
     ) in install
     assert (
         'install -o root -g root -m 0644 "$ROOT_DIR/libexec/$module" '

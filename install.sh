@@ -164,9 +164,16 @@ find /usr/local/share/kilnr/web-src -type d -exec chmod 0755 {} +
 find /usr/local/share/kilnr/web-src -type f -exec chmod 0644 {} +
 chmod 0755 /usr/local/share/kilnr/web-src/server/kilnr_web.py
 
-for module in pipeline.py artifacts.py kilnr_secrets.py kilnr_project_lock.py; do
+for module in pipeline.py artifacts.py kilnr_secrets.py kilnr_project_lock.py kilnr_permissions.py; do
     install -o root -g root -m 0644 "$ROOT_DIR/libexec/$module" "/usr/local/libexec/kilnr/$module"
 done
+
+# Repair permissions produced by older releases before installing commands
+# whose strict preflight depends on the current policy.
+/usr/bin/python3 /usr/local/libexec/kilnr/kilnr_permissions.py \
+    --normalize-builds /var/lib/kilnr/builds
+/usr/bin/python3 /usr/local/libexec/kilnr/kilnr_permissions.py \
+    --normalize-configured-repositories /etc/kilnr/projects
 
 for name in \
     controller enqueue execute notify-discord rerun doctor \

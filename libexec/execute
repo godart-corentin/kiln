@@ -61,6 +61,7 @@ def write_json(path, data):
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
         with tmp.open("x", encoding="utf-8") as f:
+            os.fchmod(f.fileno(), 0o640)
             json.dump(data, f, indent=2)
             f.write("\n")
             f.flush()
@@ -79,6 +80,7 @@ def update_job(build_dir, job_id, changes):
     lock_path = build_dir / "status.lock"
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o640)
     try:
+        os.fchmod(fd, 0o640)
         fcntl.flock(fd, fcntl.LOCK_EX)
         path = build_dir / "status.json"
         status = read_json(path)

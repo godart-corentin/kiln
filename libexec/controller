@@ -81,6 +81,7 @@ def write_json(path, data):
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
         with tmp.open("x", encoding="utf-8") as f:
+            os.fchmod(f.fileno(), 0o640)
             json.dump(data, f, indent=2)
             f.write("\n")
             f.flush()
@@ -433,7 +434,9 @@ def write_makefile(build_dir, runtime):
             f"{build} {shlex.quote(job_id)}"
         )
         lines.append("")
-    (build_dir / "pipeline.mk").write_text("\n".join(lines), encoding="utf-8")
+    pipeline_path = build_dir / "pipeline.mk"
+    pipeline_path.write_text("\n".join(lines), encoding="utf-8")
+    pipeline_path.chmod(0o640)
 
 def initial_status(job, pipeline_path=None):
     started_at = iso()

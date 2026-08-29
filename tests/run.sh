@@ -20,6 +20,7 @@ for test in \
     test_project_lock.py \
     test_project_lifecycle_locks.py \
     test_project_rename.py \
+    test_permissions.py \
     test_import_shadowing.py \
     test_branch_pipelines.py \
     test_controller_dag.py \

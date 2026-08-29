@@ -2,6 +2,8 @@
 import importlib.machinery
 import importlib.util
 import json
+import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -239,6 +241,17 @@ def test_missing_release_secret_fails_before_execution():
         finally:
             controller.SECRETS_ROOT = old_root
 
+
+def test_write_json_clamps_metadata_mode():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "status.json"
+        previous_umask = os.umask(0)
+        try:
+            controller.write_json(path, {"schema": 1})
+        finally:
+            os.umask(previous_umask)
+        assert stat.S_IMODE(path.stat().st_mode) == 0o640
+
 def main():
     tests = [
         test_runtime_uses_jobs_and_caps_parallelism,
@@ -247,6 +260,7 @@ def main():
         test_finalize_marks_pending_jobs_skipped,
         test_release_pipeline_secrets_are_validated_before_runtime,
         test_missing_release_secret_fails_before_execution,
+        test_write_json_clamps_metadata_mode,
     ]
     for test in tests:
         test()

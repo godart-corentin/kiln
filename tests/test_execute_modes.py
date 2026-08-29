@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import importlib.machinery
 import importlib.util
+import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -17,6 +19,17 @@ def load_script():
 
 
 execute = load_script()
+
+
+def test_write_json_clamps_metadata_mode():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "status.json"
+        previous_umask = os.umask(0)
+        try:
+            execute.write_json(path, {"schema": 1})
+        finally:
+            os.umask(previous_umask)
+        assert stat.S_IMODE(path.stat().st_mode) == 0o640
 
 
 def test_run_script_keeps_commands_in_one_shell():
@@ -269,6 +282,7 @@ def test_runner_security_flags_remain_present():
 
 def main():
     tests = [
+        test_write_json_clamps_metadata_mode,
         test_run_script_keeps_commands_in_one_shell,
         test_execution_argv_for_run_uses_generated_read_only_script,
         test_execution_argv_for_script_stays_inside_workspace,

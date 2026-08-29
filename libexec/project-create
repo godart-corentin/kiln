@@ -81,9 +81,11 @@ runuser -u git -- git --git-dir="$repo" config gc.packRefs false
 setfacl -R -m u:kilnr:rX "$repo"
 find "$repo" -type d -exec setfacl -m d:u:kilnr:r-x {} +
 
-# The only Git namespace writable by kilnr.
+# The only Git namespace writable by kilnr. Normalize the complete ACL instead
+# of retaining entries inherited from refs.
 install -d -o git -g git -m 0750 "$repo/refs/kilnr" "$repo/refs/kilnr/jobs"
-setfacl -m u:kilnr:rwx,d:u:kilnr:rwx "$repo/refs/kilnr" "$repo/refs/kilnr/jobs"
+/usr/bin/python3 /usr/local/libexec/kilnr/kilnr_permissions.py \
+    --normalize-repository "$repo"
 
 ln -s "$HOOK_SOURCE" "$repo/hooks/post-receive"
 
