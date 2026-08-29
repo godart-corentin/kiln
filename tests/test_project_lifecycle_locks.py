@@ -34,6 +34,7 @@ locks = load_script(LOCKS_PATH, "kilnr_project_lock_lifecycle_test")
 
 
 def provision(root: Path, *projects: str):
+    root.chmod(0o750)
     locks.provision_project_locks(root, projects)
 
 
@@ -291,6 +292,7 @@ def test_project_lock_run_executes_exact_argv_under_exclusive_lock():
     with tempfile.TemporaryDirectory() as tmp:
         lock_root = Path(tmp) / "locks"
         lock_root.mkdir()
+        lock_root.chmod(0o750)
         parent, child = context.Pipe()
 
         def run_wrapper():

@@ -333,6 +333,7 @@ def test_project_locks_rejects_a_symlinked_intermediate_ancestor():
         real = base / "real"
         root = real / "state" / "locks" / "projects"
         root.mkdir(parents=True)
+        root.chmod(0o750)
         provision(root, "demo")
         alias = base / "alias"
         alias.symlink_to(real, target_is_directory=True)
@@ -474,6 +475,7 @@ def test_submitter_cannot_replace_project_lock_namespace_through_ancestors():
         lock_parent = state / "locks"
         root = lock_parent / "projects"
         root.mkdir(parents=True)
+        root.chmod(0o750)
         provision(root, "demo")
 
         state.chmod(0o550)

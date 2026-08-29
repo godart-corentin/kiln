@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 0022
 
 ROOT_DIR="$(
     cd "$(dirname "${BASH_SOURCE[0]}")/.." \
