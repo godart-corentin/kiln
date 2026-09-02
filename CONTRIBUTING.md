@@ -12,7 +12,7 @@ Contributions should preserve that philosophy:
 
 ## Development Requirements
 
-The primary target is Ubuntu 24.04 LTS.
+The supported targets are Ubuntu 24.04 LTS and Ubuntu 26.04 LTS.
 
 Kilnr currently relies on:
 

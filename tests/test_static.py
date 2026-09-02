@@ -105,6 +105,7 @@ BASH_FILES = [
     ROOT / "install-web.sh",
     ROOT / "uninstall-web.sh",
     ROOT / "libexec" / "project-create",
+    ROOT / "libexec" / "check-platform",
     ROOT / "libexec" / "doctor",
     ROOT / "libexec" / "network-setup",
     ROOT / "libexec" / "network-teardown",
