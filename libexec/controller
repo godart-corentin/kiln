@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
@@ -209,15 +210,12 @@ def extract_snapshot(job, cfg, build_dir):
                 fail(f"git archive failed ({result.returncode})")
             log.write("Extracting archive...\n")
             log.flush()
-            result = subprocess.run(
-                [
-                    "/usr/bin/tar", "-xf", str(archive), "-C", str(src),
-                    "--no-same-owner", "--no-same-permissions",
-                ],
-                stdout=log, stderr=log, check=False,
-            )
-            if result.returncode:
-                fail(f"tar extraction failed ({result.returncode})")
+            try:
+                with tarfile.open(archive, "r:") as tar:
+                    tar.extractall(path=src, filter="data")
+            except (OSError, tarfile.TarError) as exc:
+                log.write(f"Archive extraction failed: {exc}\n")
+                fail("archive extraction failed")
             log.write("Snapshot prepared successfully.\n")
         finally:
             archive.unlink(missing_ok=True)

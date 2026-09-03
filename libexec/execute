@@ -403,38 +403,20 @@ def stream_redacted_output(process, log, tokens):
 def prepare_workspace(src_dir, work_dir, log):
     if work_dir.exists():
         shutil.rmtree(work_dir)
-    work_dir.mkdir(mode=0o750, parents=True)
 
     log.write("Preparing isolated workspace...\n")
     log.flush()
 
-    archive = subprocess.Popen(
-        [
-            "/usr/bin/tar", "--create", "--file=-",
-            "--directory", str(src_dir), ".",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=log,
-    )
-    extract = subprocess.Popen(
-        [
-            "/usr/bin/tar", "--extract", "--file=-",
-            "--directory", str(work_dir),
-            "--no-same-owner", "--no-same-permissions",
-        ],
-        stdin=archive.stdout,
-        stdout=log,
-        stderr=log,
-    )
-    assert archive.stdout is not None
-    archive.stdout.close()
-
-    extract_rc = extract.wait()
-    archive_rc = archive.wait()
-    if archive_rc != 0:
-        fail(f"workspace archive failed with exit code {archive_rc}")
-    if extract_rc != 0:
-        fail(f"workspace extraction failed with exit code {extract_rc}")
+    try:
+        shutil.copytree(
+            src_dir,
+            work_dir,
+            symlinks=True,
+        )
+        work_dir.chmod(0o750)
+    except OSError as exc:
+        log.write(f"Workspace copy failed: {exc}\n")
+        fail("workspace copy failed")
 
     log.write("Workspace prepared successfully.\n")
     log.flush()
