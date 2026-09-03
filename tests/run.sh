@@ -9,6 +9,7 @@ ROOT_DIR="$(
 
 for test in \
     test_static.py \
+    test_platform.py \
     test_uninstall.py \
     test_install_web.py \
     test_web_api.py \

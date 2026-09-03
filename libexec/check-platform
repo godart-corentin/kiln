@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+OS_RELEASE_PATH="${1:-/etc/os-release}"
+
+[[ -r "$OS_RELEASE_PATH" ]] || exit 0
+
+# shellcheck disable=SC1090
+source "$OS_RELEASE_PATH"
+
+if [[ "${ID:-}" != "ubuntu" ]]; then
+    echo "kilnr install: this installer targets Ubuntu" >&2
+    exit 1
+fi
+
+case "${VERSION_ID:-}" in
+    24.04|26.04)
+        ;;
+    *)
+        echo "kilnr install: warning: supported on Ubuntu 24.04 and 26.04 LTS, found ${VERSION_ID:-unknown}" >&2
+        ;;
+esac

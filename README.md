@@ -1,6 +1,6 @@
 # Kilnr
 
-Kilnr is a small self-hosted CI system for Ubuntu 24.04 LTS built from standard Unix tools:
+Kilnr is a small self-hosted CI system for Ubuntu 24.04 LTS and Ubuntu 26.04 LTS built from standard Unix tools:
 
 ```text
 git push
@@ -45,7 +45,7 @@ Kilnr deliberately has no Jenkins/GitLab/GitHub Actions server, no database, and
 
 ## Requirements
 
-- Ubuntu 24.04 LTS
+- Ubuntu 24.04 LTS or Ubuntu 26.04 LTS
 - systemd
 - Docker Engine already installed and running
 - rootful Docker with a `docker` group

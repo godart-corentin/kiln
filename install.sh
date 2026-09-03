@@ -16,14 +16,7 @@ if [[ "$MODE" == "--update" ]] && systemctl is-active --quiet kilnr-controller.s
     die "a Kilnr build is currently running; wait for kilnr-controller.service to become inactive"
 fi
 
-if [[ -r /etc/os-release ]]; then
-    # shellcheck disable=SC1091
-    source /etc/os-release
-    [[ "${ID:-}" == "ubuntu" ]] || die "this installer targets Ubuntu"
-    if [[ "${VERSION_ID:-}" != "24.04" ]]; then
-        echo "kilnr install: warning: tested on Ubuntu 24.04 LTS, found ${VERSION_ID:-unknown}" >&2
-    fi
-fi
+"$ROOT_DIR/libexec/check-platform"
 
 command -v apt-get >/dev/null || die "apt-get not found"
 
