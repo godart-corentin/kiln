@@ -109,6 +109,10 @@ config = {
     "runner": runner,
     "discord": {"webhook_file": secret},
 }
+if "retention" in defaults:
+    sys.path.insert(0, "/usr/local/libexec/kilnr")
+    from kilnr_retention import policy
+    config["retention"] = policy(defaults)
 print(json.dumps(config, indent=2))
 PY
 

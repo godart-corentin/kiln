@@ -56,6 +56,8 @@ then
     "$ROOT_DIR/uninstall-web.sh"
 fi
 
+systemctl disable --now kilnr-cleanup.timer 2>/dev/null || true
+systemctl stop kilnr-cleanup.service 2>/dev/null || true
 systemctl disable --now kilnr-queue.path 2>/dev/null || true
 systemctl stop kilnr-controller.service 2>/dev/null || true
 systemctl disable --now kilnr-network.service 2>/dev/null || true
@@ -67,7 +69,9 @@ fi
 rm -f \
     /etc/systemd/system/kilnr-controller.service \
     /etc/systemd/system/kilnr-queue.path \
-    /etc/systemd/system/kilnr-network.service
+    /etc/systemd/system/kilnr-network.service \
+    /etc/systemd/system/kilnr-cleanup.service \
+    /etc/systemd/system/kilnr-cleanup.timer
 
 systemctl daemon-reload
 

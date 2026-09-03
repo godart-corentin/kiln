@@ -360,9 +360,77 @@ kilnr project delete foo
 
 kilnr secret list foo
 kilnr doctor
+kilnr cleanup --dry-run
+kilnr cleanup --project foo
 ```
 
 `kilnr rerun` creates a new CI build for the same SHA. Release builds are not rerun by that command.
+
+## Build retention
+
+Fresh installations ship this policy in `/etc/kilnr/defaults.json`. Project
+creation copies it into `/etc/kilnr/projects/<project>.json` alongside the runner
+settings. Merge this fragment into the existing configuration object:
+
+```json
+"retention": {
+  "max_age_days": 30,
+  "max_builds_per_ref": 10,
+  "keep_releases": true
+}
+```
+
+`kilnr cleanup --dry-run` previews deletion with build IDs, projects, refs, ages,
+and reasons. `kilnr cleanup` applies it; `--project <project>` limits the scope.
+The daily `kilnr-cleanup.timer` runs the same implementation through
+`kilnr-cleanup.service`, with up to one hour randomized delay and catch-up for
+missed runs after startup. Inspect its schedule and output with:
+
+```bash
+systemctl status kilnr-cleanup.timer
+journalctl -u kilnr-cleanup.service
+```
+
+Only validated terminal builds (`success`, `failed`, `aborted`) outside the
+incoming/running queues qualify. Age is measured from completion; count keeps
+the newest completions independently per project/full Git ref, breaking ties by
+descending build ID. Either limit can delete a build: the count limit does not
+protect builds older than the age limit. Releases stay indefinitely unless
+`keep_releases` is explicitly set to `false`.
+Controller, project, and status locks protect lifecycle operations and reruns.
+Busy controllers or projects defer cleanup until a later run. Deletion rejects
+unsafe metadata, symlinked managed paths, and nested mounts. Interrupted deletion
+is recovered from hidden transactions beneath the builds directory.
+
+**Upgrades preserve existing configuration: projects without retention remain
+disabled.** Limits omitted or set to `null` are disabled. Defaults are copied,
+not inherited dynamically. Changing defaults affects only subsequently created
+projects. To enable retention for an existing project, stop the timer, add the
+object to that project's config, preview the results, then apply the policy and
+restart the timer:
+
+```bash
+sudo systemctl stop kilnr-cleanup.timer
+# Edit /etc/kilnr/projects/my_app.json to add retention.
+kilnr cleanup --dry-run --project my_app
+kilnr cleanup --project my_app
+sudo systemctl start kilnr-cleanup.timer
+```
+
+`kilnr rerun` holds a shared project lock through enqueue so cleanup cannot
+remove its source history during that operation. Deleted history cannot be
+rerun by build ID. The `refs/kilnr/jobs/` pins protect pending processing, not
+historical builds; cleanup removes leftover loose pins only after checking the
+expected SHA. Packed pins or conflicting pin state block deletion and require
+administrator review. Ordinary Git branches and tags are never removed.
+
+Selected builds lose their snapshots, workspaces, logs, and artifacts. Deleted
+builds disappear from the web UI, whose readers tolerate concurrent removal.
+`/var/lib/kilnr/cache`, Git objects, secrets, and queue jobs are not cleaned.
+Branch deletion does not trigger cleanup, and no GitHub or PR-state API is used.
+
+See [retention operations and safety](docs/retention.md) for ordering, crash
+recovery, pin repair, scheduling, and upgrade details.
 
 ## Filesystem layout
 
@@ -464,7 +532,12 @@ sudo ./update.sh
 kilnr doctor
 ```
 
-The update path preserves repositories, project configuration, secrets, caches, and build history.
+The update path preserves repositories, project configuration, secrets, caches,
+and build history during installation. It installs and enables the daily cleanup
+timer idempotently. Existing projects without a retention setting remain exempt
+from automatic deletion; projects with retention enabled follow their configured
+policy on subsequent cleanup runs. Existing `defaults.json` is also preserved,
+so add retention there explicitly if future projects should receive it.
 
 ## Uninstalling
 

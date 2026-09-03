@@ -21,6 +21,14 @@ export function BuildPage({ buildId }: { buildId: string }) {
     const controller = new AbortController()
     let source: EventSource | null = null
 
+    const refreshAfterEvent = () => {
+      void refresh(controller.signal).catch((reason: unknown) => {
+        if (controller.signal.aborted) return
+        source?.close()
+        setError(reason instanceof Error ? reason.message : String(reason))
+      })
+    }
+
     refresh(controller.signal)
       .then(() => {
         if (controller.signal.aborted) return
@@ -47,10 +55,10 @@ export function BuildPage({ buildId }: { buildId: string }) {
         })
         source.addEventListener('end', () => {
           source?.close()
-          void refresh()
+          refreshAfterEvent()
         })
         source.onerror = () => {
-          void refresh()
+          refreshAfterEvent()
         }
       })
       .catch((reason: unknown) => {

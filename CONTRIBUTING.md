@@ -33,6 +33,11 @@ Run:
 
     ./tests/run.sh
 
+Frontend behavior tests and the production build (after installing its npm dependencies):
+
+    npm --prefix web/frontend test
+    npm --prefix web/frontend run build
+
 Before submitting a change, also verify:
 
     bash -n install.sh

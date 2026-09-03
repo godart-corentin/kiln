@@ -14,6 +14,7 @@ PROJECT_LOCK_RUN = "/usr/local/libexec/kilnr/project-lock-run"
 PROJECT_DELETE = "/usr/local/libexec/kilnr/project-delete"
 PROJECT_RENAME = "/usr/local/libexec/kilnr/project-rename"
 PROJECT_WEBHOOK_SET = "/usr/local/libexec/kilnr/project-webhook-set"
+CLEANUP = "/usr/local/libexec/kilnr/cleanup"
 RERUN = "/usr/local/libexec/kilnr/rerun"
 GIT_KEY_ADD = "/usr/local/libexec/kilnr/git-key-add"
 DOCTOR = "/usr/local/libexec/kilnr/doctor"
@@ -33,7 +34,7 @@ def read_json(path):
 
 def all_builds():
     try:
-        items = [p for p in BUILDS.iterdir() if p.is_dir()]
+        items = [p for p in BUILDS.iterdir() if not p.name.startswith(".") and not p.is_symlink() and p.is_dir()]
     except FileNotFoundError:
         return []
     return sorted(items, key=lambda p: p.name, reverse=True)
@@ -297,6 +298,7 @@ def usage():
   kilnr watch <latest|build-id|sha-prefix> <job|pipeline>
   kilnr rerun <latest|build-id|sha-prefix>
   kilnr doctor
+  kilnr cleanup [--dry-run] [--project <project>]
 
   kilnr project create <project-name>
   kilnr project delete <project-name>
@@ -317,6 +319,9 @@ def usage():
 
 def main():
     args = sys.argv[1:]
+
+    if args and args[0] == "cleanup":
+        return privileged_command(CLEANUP, *args[1:])
 
     if len(args) == 3 and args[:2] == ["project", "create"]:
         return privileged_command(

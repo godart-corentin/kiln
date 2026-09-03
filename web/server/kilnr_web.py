@@ -40,18 +40,18 @@ def sanitize_log(text: str) -> str:
 
 def build_dirs():
     try:
-        dirs = [path for path in BUILDS.iterdir() if path.is_dir() and BUILD_RE.fullmatch(path.name)]
+        dirs = [path for path in BUILDS.iterdir() if not path.name.startswith(".") and not path.is_symlink() and path.is_dir() and BUILD_RE.fullmatch(path.name)]
     except (FileNotFoundError, PermissionError):
         return []
     return sorted(dirs, key=lambda path: path.name, reverse=True)[:MAX_BUILDS]
 
 
 def get_build(build_id: str):
-    if not BUILD_RE.fullmatch(build_id):
+    if build_id.startswith(".") or not BUILD_RE.fullmatch(build_id):
         return None
     path = BUILDS / build_id
     try:
-        if not path.is_dir():
+        if path.is_symlink() or not path.is_dir():
             return None
         status = read_json(path / "status.json")
     except (OSError, ValueError, json.JSONDecodeError):
@@ -308,6 +308,12 @@ class KilnrHandler(BaseHTTPRequestHandler):
                     self.write_keepalive()
                     last_keepalive = now
                 time.sleep(SSE_POLL_SECONDS)
+        except FileNotFoundError:
+            try:
+                self.write_sse("end", {"offset": offset, "state": "deleted"})
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         except (BrokenPipeError, ConnectionResetError):
             return
 
@@ -320,6 +326,9 @@ class KilnrHandler(BaseHTTPRequestHandler):
                 time.sleep(SSE_POLL_SECONDS)
                 try:
                     current = read_json(build_dir / "status.json")
+                except FileNotFoundError:
+                    self.write_sse("end", {"state": "deleted"})
+                    return
                 except (OSError, ValueError, json.JSONDecodeError):
                     continue
                 for event, data in diff_status_events(previous, current):

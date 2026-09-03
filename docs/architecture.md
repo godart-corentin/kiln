@@ -136,6 +136,18 @@ Only the initial creation of a tag matching `^v[0-9]+\.[0-9]+\.[0-9]+$` becomes 
 
 Pipeline steps with `"when": "release"` are excluded entirely from normal CI runtime data.
 
+## Completed-build retention
+
+The administrator cleanup helper and daily systemd timer share
+`kilnr_retention.py`. Cleanup holds the controller lock, then an exclusive
+project lock, validates terminal build identities, and retires selected builds
+through durable `.cleanup-<id>` transactions under the builds root. Rerun holds
+a shared project lock through enqueue. Git pins remain preparation-scoped;
+cleanup retries stale loose pins without granting repository-wide write access.
+
+See [retention](retention.md) for configuration, migration behavior, deletion
+invariants, reader behavior, and recovery.
+
 ## Current limitation
 
 Kilnr 0.1 executes project steps in Linux Docker containers. Native macOS workers are intentionally not part of this initial package.

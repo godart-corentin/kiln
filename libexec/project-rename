@@ -1542,6 +1542,8 @@ def inventory_rename(roots, old, new, *, _allowed_build_entries=()):
     build_shas = {}
     destinations = set()
     for build_dir in sorted(builds_root.iterdir(), key=lambda item: item.name):
+        if build_dir.name.startswith(".cleanup-"):
+            _fail("unfinished build cleanup; run kilnr cleanup before renaming projects")
         if build_dir.is_symlink():
             _fail(f"build directory is a symlink: {build_dir}")
         info = build_dir.lstat()

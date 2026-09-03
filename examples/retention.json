@@ -1,0 +1,7 @@
+{
+  "retention": {
+    "max_age_days": 30,
+    "max_builds_per_ref": 10,
+    "keep_releases": true
+  }
+}

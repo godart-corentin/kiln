@@ -5,6 +5,12 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from contextlib import ExitStack
+
+from kilnr_project_lock import project_locks, _open_directory_chain
+from kilnr_retention import BUILD_RE as STRUCTURED_BUILD_RE, directory, read_json
+
+PROJECT_LOCK_ROOT = Path("/var/lib/kilnr/locks/projects")
 
 BUILDS = Path("/var/lib/kilnr/builds")
 ENQUEUE = "/usr/local/libexec/kilnr/enqueue"
@@ -29,11 +35,24 @@ def main():
     if not BUILD_RE.fullmatch(build_id):
         fail("invalid build id")
 
+    match = STRUCTURED_BUILD_RE.fullmatch(build_id)
+    if not match:
+        fail("invalid structured build id")
+    with project_locks(PROJECT_LOCK_ROOT, [match[2]], exclusive=False):
+        return rerun_locked(build_id, match[2])
+
+
+def rerun_locked(build_id, expected_project):
     try:
-        status = json.loads((BUILDS / build_id / "status.json").read_text(encoding="utf-8"))
+        with ExitStack() as stack:
+            root = _open_directory_chain(stack, BUILDS)[1][-1][1]
+            with directory(build_id, root) as fd:
+                status = read_json(fd, "status.json")
     except Exception as exc:
         fail(f"cannot read build: {exc}")
 
+    if status.get("project") != expected_project:
+        fail("project identity mismatch")
     if status.get("build_id") != build_id:
         fail("build id mismatch")
     if status.get("type") != "ci":

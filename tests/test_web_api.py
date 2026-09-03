@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import importlib.util
 import json
+import shutil
+from unittest.mock import patch
 import tempfile
 from pathlib import Path
 
@@ -130,6 +132,55 @@ def test_job_terminal():
     assert module.job_terminal(status, 'pipeline') is False
     status['state'] = 'failed'
     assert module.job_terminal(status, 'pipeline') is True
+
+
+
+def test_build_disappears_between_listing_and_status_read():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        build = root / '20260826-demo-abc'
+        build.mkdir()
+        write_status(build)
+        module.BUILDS = root
+        def vanished_dirs():
+            shutil.rmtree(build)
+            return [build]
+        with patch.object(module, 'build_dirs', vanished_dirs):
+            assert module.api_builds() == []
+        assert module.get_build(build.name) is None
+        assert module.artifact_list(build) == []
+
+
+def test_cleanup_transactions_do_not_consume_listing_limit():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        module.BUILDS = root
+        for index in range(module.MAX_BUILDS + 1):
+            (root / f'.cleanup-{index}').mkdir()
+        build = root / '20260826-demo-abc'
+        build.mkdir()
+        write_status(build)
+        assert [row['build_id'] for row in module.api_builds()] == [build.name]
+        assert module.get_build('.cleanup-0') is None
+
+
+def test_live_streams_end_when_build_disappears():
+    with tempfile.TemporaryDirectory() as tmp:
+        build = Path(tmp) / 'build'
+        (build / 'logs').mkdir(parents=True)
+        (build / 'logs/tests.log').write_text('hello')
+        status = write_status(build)
+        handler = object.__new__(module.KilnrHandler)
+        events = []
+        handler.write_sse = lambda event, data: events.append((event, data))
+        handler.start_sse = lambda: shutil.rmtree(build)
+        handler.serve_log_stream(build, status, 'tests', 0)
+        assert events == [('end', {'offset': 0, 'state': 'deleted'})]
+        events.clear()
+        handler.start_sse = lambda: None
+        with patch.object(module.time, 'sleep', lambda _seconds: None):
+            handler.serve_build_events(build, status)
+        assert events == [('end', {'state': 'deleted'})]
 
 
 if __name__ == '__main__':

@@ -16,6 +16,10 @@ if [[ "$MODE" == "--update" ]] && systemctl is-active --quiet kilnr-controller.s
     die "a Kilnr build is currently running; wait for kilnr-controller.service to become inactive"
 fi
 
+if [[ "$MODE" == "--update" ]]; then
+    systemctl stop kilnr-cleanup.timer kilnr-cleanup.service 2>/dev/null || true
+fi
+
 "$ROOT_DIR/libexec/check-platform"
 
 command -v apt-get >/dev/null || die "apt-get not found"
@@ -157,7 +161,7 @@ find /usr/local/share/kilnr/web-src -type d -exec chmod 0755 {} +
 find /usr/local/share/kilnr/web-src -type f -exec chmod 0644 {} +
 chmod 0755 /usr/local/share/kilnr/web-src/server/kilnr_web.py
 
-for module in pipeline.py artifacts.py kilnr_secrets.py kilnr_project_lock.py kilnr_permissions.py; do
+for module in pipeline.py artifacts.py kilnr_secrets.py kilnr_project_lock.py kilnr_permissions.py kilnr_retention.py; do
     install -o root -g root -m 0644 "$ROOT_DIR/libexec/$module" "/usr/local/libexec/kilnr/$module"
 done
 
@@ -169,7 +173,7 @@ done
     --normalize-configured-repositories /etc/kilnr/projects
 
 for name in \
-    controller enqueue execute notify-discord rerun doctor \
+    controller enqueue execute notify-discord rerun doctor cleanup \
     project-create project-delete project-lock-run project-rename project-webhook-set \
     secret-set secret-set-file secret-list secret-delete \
     git-key-add network-setup network-teardown
@@ -209,13 +213,14 @@ EOF
     chmod 0644 /etc/kilnr/network.env
 fi
 
-for unit in kilnr-controller.service kilnr-queue.path kilnr-network.service; do
+for unit in kilnr-controller.service kilnr-queue.path kilnr-network.service kilnr-cleanup.service kilnr-cleanup.timer; do
     install -o root -g root -m 0644 "$ROOT_DIR/systemd/$unit" "/etc/systemd/system/$unit"
 done
 
 systemctl daemon-reload
 systemctl enable --now kilnr-network.service
 systemctl enable --now kilnr-queue.path
+systemctl enable --now kilnr-cleanup.timer
 
 echo
 echo "Kilnr core installed."

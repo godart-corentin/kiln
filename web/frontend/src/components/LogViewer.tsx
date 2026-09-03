@@ -39,7 +39,15 @@ export function LogViewer({ buildId, job }: { buildId: string; job: string }) {
       })
       stream.onerror = () => {
         stream?.close()
-        if (!cancelled) reconnectTimer = window.setTimeout(connect, 750)
+        // A retained build can disappear between the snapshot and SSE request.
+        // Verify it still exists before scheduling another connection.
+        void getLog(buildId, job, controller.signal)
+          .then(() => {
+            if (!cancelled) reconnectTimer = window.setTimeout(connect, 750)
+          })
+          .catch((reason: unknown) => {
+            if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason))
+          })
       }
     }
 
